@@ -1,0 +1,12 @@
+{
+  "name": "Odoo: Post Message to Channel",
+  "nodes": [
+    {"parameters":{"keepOnlySet":true,"values":{"string":[{"name":"base_url","value":"http://localhost:8069"},{"name":"webhook_uuid","value":"REPLACE_WITH_UUID"},{"name":"secret","value":"REPLACE_WITH_SECRET"},{"name":"channel_name","value":"General"},{"name":"message","value":"Hello channel from n8n"}]}},"id":"Set Config","name":"Set Config","type":"n8n-nodes-base.set","typeVersion":2.3,"position":[240,200]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={\n  \"model\": \"mail.channel\",\n  \"method\": \"search\",\n  \"domain\": [[\"name\",\"=\",\"{{$json.channel_name}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"},"id":"Find Channel","name":"Find Channel","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[520,200]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={{ (() => { const chId = $items(\"Find Channel\")[0].json.records?.[0]?.id; if (!chId) { return '{\\n  \\\"error\\\": \\\"Channel not found\\\"\\n}'; } return JSON.stringify({ model: 'mail.message', method: 'create', values: { model: 'mail.channel', res_id: chId, body: $json.message, message_type: 'comment', subtype_xmlid: 'mail.mt_comment', message_type_internal: 'comment' } }); })() }}"},"id":"Post Message","name":"Post Message","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[800,200]}
+  ],
+  "connections":{
+    "Set Config":{"main":[[{"node":"Find Channel","type":"main","index":0}]]},
+    "Find Channel":{"main":[[{"node":"Post Message","type":"main","index":0}]]}
+  },
+  "active":false,"settings":{},"id":"odoo-post-channel-msg"}

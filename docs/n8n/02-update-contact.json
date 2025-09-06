@@ -1,0 +1,6 @@
+{
+  "name": "Odoo: Update Contact by Email",
+  "nodes": [
+    {"parameters":{"keepOnlySet":true,"values":{"string":[{"name":"base_url","value":"http://localhost:8069"},{"name":"webhook_uuid","value":"REPLACE_WITH_UUID"},{"name":"secret","value":"REPLACE_WITH_SECRET"},{"name":"email","value":"webhook@example.com"}]}},"id":"Set Config","name":"Set Config","type":"n8n-nodes-base.set","typeVersion":2.3,"position":[260,260]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={\n  \"model\": \"res.partner\",\n  \"method\": \"write\",\n  \"domain\": [[\"email\",\"=\",\"{{$json.email}}\"]],\n  \"values\": {\n    \"phone\": \"+55 11 99999-0000\"\n  }\n}"},"id":"HTTP Request","name":"HTTP Request","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[520,260]}]
+  ,"connections":{"Set Config":{"main":[[{"node":"HTTP Request","type":"main","index":0}]]}},"active":false,"settings":{},"id":"odoo-update-contact"}

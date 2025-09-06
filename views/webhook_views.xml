@@ -1,0 +1,73 @@
+<odoo>
+  <data>
+    <record id="view_bitconn_webhook_form" model="ir.ui.view">
+      <field name="name">bitconn.webhook.form</field>
+      <field name="model">bitconn.webhook</field>
+      <field name="arch" type="xml">
+  <form>
+          <sheet>
+            <group col="2">
+              <field name="name"/>
+              <field name="user_id" options="{'no_create': True, 'no_open': True}"/>
+              <field name="can_create"/>
+              <field name="can_write"/>
+              <field name="can_unlink"/>
+            </group>
+            <notebook>
+              <page string="Inbound">
+                <group>
+                  <group col="2" class="w-100">
+                    <field name="allowed_model_ids" widget="many2many_tags"/>
+                  </group>
+                  <group col="2" class="w-100">
+                    <field name="webhook_url" readonly="1" widget="CopyClipboardURL"/>
+                    <field name="secret_key" readonly="1" widget="CopyClipboardChar"/>
+                    <!-- <field name="webhook_uuid" readonly="1"/> -->
+                  </group>
+                </group>
+                    <button name="action_regenerate_credentials" string="Regenerate Credentials" type="object" icon="fa-refresh" class="btn-link d-block mx-auto" colspan="2"/>
+              </page>
+
+              <page string="Outbound">
+                <group col="2">
+                  <field name="outbound_enabled"/>
+                  <field name="outbound_url" colspan="2"/>
+                  <field name="outbound_headers" widget="code" options="{'mode': 'javascript'}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
+                  <separator string="Test"/>
+                  <field name="outbound_test_body" widget="code" options="{'mode': 'javascript'}" colspan="2"/>
+                    <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary" icon="fa-paper-plane"/>
+                  <field name="outbound_test_result" readonly="1" colspan="2"/>
+                </group>
+              </page>
+            </notebook>
+          </sheet>
+            <chatter/>
+        </form>
+      </field>
+    </record>
+
+    <record id="view_bitconn_webhook_tree" model="ir.ui.view">
+      <field name="name">bitconn.webhook.tree</field>
+      <field name="model">bitconn.webhook</field>
+      <field name="arch" type="xml">
+        <list>
+          <field name="name"/>
+          <field name="user_id"/>
+          <field name="webhook_url"/>
+          <field name="can_create"/>
+          <field name="can_write"/>
+          <field name="can_unlink"/>
+        </list>
+      </field>
+    </record>
+
+    <record id="action_bitconn_webhook" model="ir.actions.act_window">
+      <field name="name">Bitconn Webhooks</field>
+      <field name="res_model">bitconn.webhook</field>
+      <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem id="menu_bitconn_webhook_root" name="Bitconn Webhook" parent="base.menu_custom" sequence="1000"/>
+    <menuitem id="menu_bitconn_webhook" name="Webhooks" parent="menu_bitconn_webhook_root" action="action_bitconn_webhook"/>
+  </data>
+</odoo>

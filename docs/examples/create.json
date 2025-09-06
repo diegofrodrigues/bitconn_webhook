@@ -1,0 +1,9 @@
+{
+  "model": "res.partner",
+  "method": "create",
+  "values": {
+    "name": "Cliente Webhook",
+    "mobile": "+5511999999999",
+    "email": "cliente@example.com"
+  }
+}

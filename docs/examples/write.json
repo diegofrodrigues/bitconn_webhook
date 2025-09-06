@@ -1,0 +1,9 @@
+{
+  "model": "res.partner",
+  "method": "write",
+  "domain": [["mobile", "=", "+5511999999999"]],
+  "values": {
+    "name": "Cliente Webhook Atualizado",
+    "comment": "Atualizado via webhook"
+  }
+}

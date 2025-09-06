@@ -1,0 +1,23 @@
+<odoo>
+  <data>
+    <!-- Extend Server Action form to include Webhook action fields -->
+    <record id="view_server_action_form_inherit_bitconn_webhook" model="ir.ui.view">
+      <field name="name">ir.actions.server.form.inherit.bitconn.webhook</field>
+      <field name="model">ir.actions.server</field>
+      <field name="inherit_id" ref="base.view_server_action_form"/>
+      <field name="arch" type="xml">
+        <!-- Insert Webhook section at the end of the sheet to use the full modal width -->
+        <xpath expr="//sheet" position="inside">
+          <group name="bitconn_webhook_section" invisible="state != 'bitconn_webhook'" col="2" class="w-100">
+            <field name="bitconn_webhook_id"/>
+            <field name="bitconn_field_ids" widget="many2many_tags"/>
+            <field name="bitconn_extra_json" placeholder='{"source":"odoo"}'/>
+            <separator string="Preview"/>
+            <button name="action_generate_bitconn_preview" type="object" string="Regenerate Preview" class="btn-secondary"/>
+            <field name="bitconn_preview_payload" nolabel="1" widget="code" options="{'mode': 'javascript'}" class="w-100" colspan="2" placeholder='{"model": "res.partner", "records": [{"name": "string"}]}'/>
+          </group>
+        </xpath>
+      </field>
+    </record>
+  </data>
+</odoo>

@@ -1,0 +1,5 @@
+{
+  "model": "res.partner",
+  "method": "unlink",
+  "domain": [["id", "in", [12, 34]]]
+}

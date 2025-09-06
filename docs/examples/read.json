@@ -1,0 +1,6 @@
+{
+  "model": "res.partner",
+  "method": "read",
+  "ids": [1, 2],
+  "fields": ["name", "email", "mobile"]
+}

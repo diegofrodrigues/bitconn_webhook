@@ -1,0 +1,14 @@
+{
+  "name": "Odoo: Create Sale Order (find partner/product)",
+  "nodes": [
+    {"parameters":{"keepOnlySet":true,"values":{"string":[{"name":"base_url","value":"http://localhost:8069"},{"name":"webhook_uuid","value":"REPLACE_WITH_UUID"},{"name":"secret","value":"REPLACE_WITH_SECRET"},{"name":"partner_email","value":"webhook@example.com"},{"name":"product_default_code","value":"CONSULT"}],"number":[{"name":"qty","value":1},{"name":"price","value":100}]},"options":{}},"id":"Set Config","name":"Set Config","type":"n8n-nodes-base.set","typeVersion":2.3,"position":[240,180]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={\n  \"model\": \"res.partner\",\n  \"method\": \"search\",\n  \"domain\": [[\"email\",\"=\",\"{{$json.partner_email}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"},"id":"Find Partner","name":"Find Partner","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[520,120]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={\n  \"model\": \"product.product\",\n  \"method\": \"search\",\n  \"domain\": [[\"default_code\",\"=\",\"{{$json.product_default_code}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"},"id":"Find Product","name":"Find Product","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[520,260]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={{ (() => { const partnerId = $items(\"Find Partner\")[0].json.records?.[0]?.id; const productId = $items(\"Find Product\")[0].json.records?.[0]?.id; if (!partnerId || !productId) { return '{\\n  \\\"error\\\": \\\"Missing partner or product\\\"\\n}'; } return JSON.stringify({ model: 'sale.order', method: 'create', values: { partner_id: partnerId, order_line: [[0, 0, { product_id: productId, product_uom_qty: $json.qty, price_unit: $json.price }]] } }); })() }}"},"id":"Create SO","name":"Create SO","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[800,180]}
+  ],
+  "connections":{
+    "Set Config":{"main":[[{"node":"Find Partner","type":"main","index":0},{"node":"Find Product","type":"main","index":0}]]},
+    "Find Partner":{"main":[[{"node":"Create SO","type":"main","index":0}]]},
+    "Find Product":{"main":[[{"node":"Create SO","type":"main","index":0}]]}
+  },
+  "active":false,"settings":{},"id":"odoo-create-so"}

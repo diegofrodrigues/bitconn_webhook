@@ -1,0 +1,105 @@
+{
+  "name": "Odoo: Create Contact",
+  "nodes": [
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "base_url",
+              "value": "http://localhost:8069"
+            },
+            {
+              "name": "webhook_uuid",
+              "value": "REPLACE_WITH_UUID"
+            },
+            {
+              "name": "secret",
+              "value": "REPLACE_WITH_SECRET"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "Set Config",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2.3,
+      "position": [
+        260,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "requestMethod": "POST",
+        "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}",
+        "jsonParameters": true,
+        "options": {
+          "headerParametersUi": {
+            "parameter": [
+              {"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}
+            ]
+          }
+        },
+        "bodyParametersJson": "={\n  \"model\": \"res.partner\",\n  \"method\": \"create\",\n  \"values\": {\n    \"name\": \"Webhook Contact\",\n    \"email\": \"webhook@example.com\"\n  }\n}"
+      },
+      "id": "HTTP Request",
+      "name": "HTTP Request",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        520,
+        260
+      ],
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "operation": "set",
+        "value": "={{$node[\"HTTP Request\"].json}}"
+      },
+      "id": "Result",
+      "name": "Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        760,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Config": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {},
+  "staticData": {},
+  "meta": {
+    "instanceId": ""
+  },
+  "id": "odoo-create-contact"
+}

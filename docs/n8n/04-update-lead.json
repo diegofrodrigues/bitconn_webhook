@@ -1,0 +1,7 @@
+{
+  "name": "Odoo: Update Lead by Id",
+  "nodes": [
+    {"parameters":{"keepOnlySet":true,"values":{"string":[{"name":"base_url","value":"http://localhost:8069"},{"name":"webhook_uuid","value":"REPLACE_WITH_UUID"},{"name":"secret","value":"REPLACE_WITH_SECRET"}],"number":[{"name":"lead_id","value":1}]}},"id":"Set Config","name":"Set Config","type":"n8n-nodes-base.set","typeVersion":2.3,"position":[260,240]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={\n  \"model\": \"crm.lead\",\n  \"method\": \"write\",\n  \"domain\": [[\"id\",\"=\",{{$json.lead_id}}]],\n  \"values\": {\n    \"priority\": \"2\"\n  }\n}"},"id":"HTTP Request","name":"HTTP Request","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[520,240]}],
+  "connections":{"Set Config":{"main":[[{"node":"HTTP Request","type":"main","index":0}]]}},
+  "active":false,"settings":{},"id":"odoo-update-lead"}

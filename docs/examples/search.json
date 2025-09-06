@@ -1,0 +1,7 @@
+{
+  "model": "res.partner",
+  "method": "search",
+  "domain": [["email", "=", "cliente@example.com"]],
+  "fields": ["id", "name", "email"],
+  "limit": 5
+}

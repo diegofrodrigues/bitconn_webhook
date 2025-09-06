@@ -1,0 +1,12 @@
+{
+  "name": "Odoo: Post Message on Sale Order",
+  "nodes": [
+    {"parameters":{"keepOnlySet":true,"values":{"string":[{"name":"base_url","value":"http://localhost:8069"},{"name":"webhook_uuid","value":"REPLACE_WITH_UUID"},{"name":"secret","value":"REPLACE_WITH_SECRET"},{"name":"so_name","value":"S00001"},{"name":"message","value":"Hello from n8n"}]}},"id":"Set Config","name":"Set Config","type":"n8n-nodes-base.set","typeVersion":2.3,"position":[240,200]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={\n  \"model\": \"sale.order\",\n  \"method\": \"search\",\n  \"domain\": [[\"name\",\"=\",\"{{$json.so_name}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"},"id":"Find SO","name":"Find SO","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[520,200]},
+    {"parameters":{"requestMethod":"POST","url":"={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}","jsonParameters":true,"options":{"headerParametersUi":{"parameter":[{"name":"Authorization","value":"={{'Bearer ' + $json.secret}}"}]}},"bodyParametersJson":"={{ (() => { const soId = $items(\"Find SO\")[0].json.records?.[0]?.id; if (!soId) { return '{\\n  \\\"error\\\": \\\"SO not found\\\"\\n}'; } return JSON.stringify({ model: 'mail.message', method: 'create', values: { model: 'sale.order', res_id: soId, body: $json.message, message_type: 'comment', subtype_xmlid: 'mail.mt_comment' } }); })() }}"},"id":"Post Message","name":"Post Message","type":"n8n-nodes-base.httpRequest","typeVersion":4.2,"position":[800,200]}
+  ],
+  "connections":{
+    "Set Config":{"main":[[{"node":"Find SO","type":"main","index":0}]]},
+    "Find SO":{"main":[[{"node":"Post Message","type":"main","index":0}]]}
+  },
+  "active":false,"settings":{},"id":"odoo-post-so-msg"}

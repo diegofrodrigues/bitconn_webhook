@@ -1,0 +1,101 @@
+{
+  "name": "Odoo Webhook: All Flows (Base)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "Start",
+      "name": "Start",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [200, 200]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {"name": "base_url", "value": "http://localhost:8069"},
+            {"name": "webhook_uuid", "value": "REPLACE_WITH_UUID"},
+            {"name": "secret", "value": "REPLACE_WITH_SECRET"},
+            {"name": "flow", "value": "create_contact"},
+            {"name": "partner_email", "value": "webhook@example.com"},
+            {"name": "product_default_code", "value": "CONSULT"},
+            {"name": "so_name", "value": "S00001"},
+            {"name": "message", "value": "Hello from n8n"},
+            {"name": "channel_name", "value": "General"}
+          ],
+          "number": [
+            {"name": "qty", "value": 1},
+            {"name": "price", "value": 100},
+            {"name": "lead_id", "value": 1}
+          ]
+        }
+      },
+      "id": "Set Config",
+      "name": "Set Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2.3,
+      "position": [420, 200]
+    },
+
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "create_contact"}]}}, "id": "IF Create Contact", "name": "IF Create Contact", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 40]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "update_contact"}]}}, "id": "IF Update Contact", "name": "IF Update Contact", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 120]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "create_lead"}]}}, "id": "IF Create Lead", "name": "IF Create Lead", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 200]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "update_lead"}]}}, "id": "IF Update Lead", "name": "IF Update Lead", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 280]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "create_sale_order"}]}}, "id": "IF Create SO", "name": "IF Create SO", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 360]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "create_invoice"}]}}, "id": "IF Create Invoice", "name": "IF Create Invoice", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 440]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "post_sale_order_message"}]}}, "id": "IF Post SO Message", "name": "IF Post SO Message", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 520]},
+    {"parameters": {"conditions": {"string": [{"value1": "={{$json.flow}}", "operation": "equal", "value2": "post_channel_message"}]}}, "id": "IF Post Channel Message", "name": "IF Post Channel Message", "type": "n8n-nodes-base.if", "typeVersion": 2, "position": [700, 600]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"res.partner\",\n  \"method\": \"create\",\n  \"values\": {\n    \"name\": \"Webhook Contact\",\n    \"email\": \"webhook@example.com\"\n  }\n}"}, "id": "Create Contact", "name": "Create Contact", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 40]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"res.partner\",\n  \"method\": \"write\",\n  \"domain\": [[\"email\",\"=\",\"{{$json.email}}\"]],\n  \"values\": {\n    \"phone\": \"+55 11 99999-0000\"\n  }\n}"}, "id": "Update Contact", "name": "Update Contact", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 120]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"crm.lead\",\n  \"method\": \"create\",\n  \"values\": {\n    \"name\": \"Webhook Lead\",\n    \"contact_name\": \"John Doe\",\n    \"email_from\": \"lead@example.com\"\n  }\n}"}, "id": "Create Lead", "name": "Create Lead", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 200]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"crm.lead\",\n  \"method\": \"write\",\n  \"domain\": [[\"id\",\"=\",{{$json.lead_id}}]],\n  \"values\": {\n    \"priority\": \"2\"\n  }\n}"}, "id": "Update Lead", "name": "Update Lead", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 280]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"res.partner\",\n  \"method\": \"search\",\n  \"domain\": [[\"email\",\"=\",\"{{$json.partner_email}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"}, "id": "Find Partner SO", "name": "Find Partner SO", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 340]},
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"product.product\",\n  \"method\": \"search\",\n  \"domain\": [[\"default_code\",\"=\",\"{{$json.product_default_code}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"}, "id": "Find Product SO", "name": "Find Product SO", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 380]},
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={{ (() => { const partnerId = $items(\"Find Partner SO\")[0].json.records?.[0]?.id; const productId = $items(\"Find Product SO\")[0].json.records?.[0]?.id; if (!partnerId || !productId) { return '{\\n  \\\"error\\\": \\\"Missing partner or product\\\"\\n}'; } return JSON.stringify({ model: 'sale.order', method: 'create', values: { partner_id: partnerId, order_line: [[0, 0, { product_id: productId, product_uom_qty: $json.qty, price_unit: $json.price }]] } }); })() }}"}, "id": "Create SO", "name": "Create SO", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1260, 360]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"res.partner\",\n  \"method\": \"search\",\n  \"domain\": [[\"email\",\"=\",\"{{$json.partner_email}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"}, "id": "Find Partner INV", "name": "Find Partner INV", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 440]},
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"product.product\",\n  \"method\": \"search\",\n  \"domain\": [[\"default_code\",\"=\",\"{{$json.product_default_code}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"}, "id": "Find Product INV", "name": "Find Product INV", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 480]},
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={{ (() => { const partnerId = $items(\"Find Partner INV\")[0].json.records?.[0]?.id; const productId = $items(\"Find Product INV\")[0].json.records?.[0]?.id; if (!partnerId || !productId) { return '{\\n  \\\"error\\\": \\\"Missing partner or product\\\"\\n}'; } return JSON.stringify({ model: 'account.move', method: 'create', values: { move_type: 'out_invoice', partner_id: partnerId, invoice_line_ids: [[0, 0, { product_id: productId, quantity: $json.qty, price_unit: $json.price }]] } }); })() }}"}, "id": "Create Invoice", "name": "Create Invoice", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1260, 460]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"sale.order\",\n  \"method\": \"search\",\n  \"domain\": [[\"name\",\"=\",\"{{$json.so_name}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"}, "id": "Find SO", "name": "Find SO", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 540]},
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={{ (() => { const soId = $items(\"Find SO\")[0].json.records?.[0]?.id; if (!soId) { return '{\\n  \\\"error\\\": \\\"SO not found\\\"\\n}'; } return JSON.stringify({ model: 'mail.message', method: 'create', values: { model: 'sale.order', res_id: soId, body: $json.message, message_type: 'comment', subtype_xmlid: 'mail.mt_comment' } }); })() }}"}, "id": "Post SO Message", "name": "Post SO Message", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1260, 540]},
+
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={\n  \"model\": \"mail.channel\",\n  \"method\": \"search\",\n  \"domain\": [[\"name\",\"=\",\"{{$json.channel_name}}\"]],\n  \"fields\": [\"id\",\"name\"],\n  \"limit\": 1\n}"}, "id": "Find Channel", "name": "Find Channel", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [980, 620]},
+    {"parameters": {"requestMethod": "POST", "url": "={{$json.base_url}}/bitconn/webhook/{{$json.webhook_uuid}}", "jsonParameters": true, "options": {"headerParametersUi": {"parameter": [{"name": "Authorization", "value": "={{'Bearer ' + $json.secret}}"}]}}, "bodyParametersJson": "={{ (() => { const channelId = $items(\"Find Channel\")[0].json.records?.[0]?.id; if (!channelId) { return '{\\n  \\\"error\\\": \\\"Channel not found\\\"\\n}'; } return JSON.stringify({ model: 'mail.message', method: 'create', values: { model: 'mail.channel', res_id: channelId, body: $json.message, message_type: 'comment', subtype_xmlid: 'mail.mt_comment' } }); })() }}"}, "id": "Post Channel Message", "name": "Post Channel Message", "type": "n8n-nodes-base.httpRequest", "typeVersion": 4.2, "position": [1260, 620]}
+  ],
+  "connections": {
+    "Start": {"main": [[{"node": "Set Config", "type": "main", "index": 0}]]},
+    "Set Config": {"main": [[{"node": "IF Create Contact", "type": "main", "index": 0}, {"node": "IF Update Contact", "type": "main", "index": 0}, {"node": "IF Create Lead", "type": "main", "index": 0}, {"node": "IF Update Lead", "type": "main", "index": 0}, {"node": "IF Create SO", "type": "main", "index": 0}, {"node": "IF Create Invoice", "type": "main", "index": 0}, {"node": "IF Post SO Message", "type": "main", "index": 0}, {"node": "IF Post Channel Message", "type": "main", "index": 0}]]},
+
+    "IF Create Contact": {"main": [[{"node": "Create Contact", "type": "main", "index": 0}], []]},
+    "IF Update Contact": {"main": [[{"node": "Update Contact", "type": "main", "index": 0}], []]},
+    "IF Create Lead": {"main": [[{"node": "Create Lead", "type": "main", "index": 0}], []]},
+    "IF Update Lead": {"main": [[{"node": "Update Lead", "type": "main", "index": 0}], []]},
+
+    "IF Create SO": {"main": [[{"node": "Find Partner SO", "type": "main", "index": 0}, {"node": "Find Product SO", "type": "main", "index": 0}], []]},
+    "Find Partner SO": {"main": [[{"node": "Create SO", "type": "main", "index": 0}]]},
+    "Find Product SO": {"main": [[{"node": "Create SO", "type": "main", "index": 0}]]},
+
+    "IF Create Invoice": {"main": [[{"node": "Find Partner INV", "type": "main", "index": 0}, {"node": "Find Product INV", "type": "main", "index": 0}], []]},
+    "Find Partner INV": {"main": [[{"node": "Create Invoice", "type": "main", "index": 0}]]},
+    "Find Product INV": {"main": [[{"node": "Create Invoice", "type": "main", "index": 0}]]},
+
+    "IF Post SO Message": {"main": [[{"node": "Find SO", "type": "main", "index": 0}], []]},
+    "Find SO": {"main": [[{"node": "Post SO Message", "type": "main", "index": 0}]]},
+
+    "IF Post Channel Message": {"main": [[{"node": "Find Channel", "type": "main", "index": 0}], []]},
+    "Find Channel": {"main": [[{"node": "Post Channel Message", "type": "main", "index": 0}]]}
+  },
+  "pinData": {},
+  "active": false,
+  "settings": {},
+  "staticData": {},
+  "meta": {"instanceId": ""},
+  "id": "odoo-webhook-all-flows"
+}
