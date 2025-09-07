@@ -1,8 +1,0 @@
-{
-  "model": "res.partner",
-  "method": "search_read",
-  "domain": [["email", "ilike", "@example.com"]],
-  "fields": ["name", "email", "mobile"],
-  "limit": 50,
-  "order": "id desc"
-}

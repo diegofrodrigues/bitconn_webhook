@@ -3,5 +3,6 @@
   "method": "search",
   "domain": [["email", "=", "cliente@example.com"]],
   "fields": ["id", "name", "email"],
-  "limit": 5
+  "limit": 5,
+  "order": "id desc"
 }

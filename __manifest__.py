@@ -15,4 +15,5 @@
     ],
     'installable': True,
     'application': False,
+    'images': ['static/description/icon.svg'],
 }
