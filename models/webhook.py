@@ -69,8 +69,26 @@ class BitconnWebhook(models.Model):
             try:
                 import requests
                 resp = requests.post(rec.outbound_url, data=body, headers=headers, timeout=15)
-                rec.outbound_test_result = f"Status: {resp.status_code}\nBody:\n{resp.text}"
-                rec.message_post(body=_("Outbound test sent: status %s") % resp.status_code)
+                # Pretty print JSON when possible
+                formatted = resp.text or ''
+                try:
+                    ctype = (resp.headers.get('Content-Type') or '').lower()
+                except Exception:
+                    ctype = ''
+                if 'application/json' in ctype or (formatted.strip().startswith('{') or formatted.strip().startswith('[')):
+                    try:
+                        parsed = resp.json()
+                    except Exception:
+                        try:
+                            parsed = json.loads(formatted)
+                        except Exception:
+                            parsed = None
+                    if parsed is not None:
+                        try:
+                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
+                        except Exception:
+                            pass
+                rec.outbound_test_result = f"Status: {resp.status_code}\nBody:\n{formatted}"
             except Exception as e:
                 rec.outbound_test_result = f"Error: {e}"
                 raise UserError(_('Outbound test failed: %s') % str(e))

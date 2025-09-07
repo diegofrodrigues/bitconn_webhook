@@ -32,11 +32,11 @@
                 <group col="2">
                   <field name="outbound_enabled"/>
                   <field name="outbound_url" colspan="2"/>
-                  <field name="outbound_headers" widget="code" options="{'mode': 'javascript'}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
+                  <field name="outbound_headers" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
                   <separator string="Test"/>
-                  <field name="outbound_test_body" widget="code" options="{'mode': 'javascript'}" colspan="2"/>
+                  <field name="outbound_test_body" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2"/>
                     <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary" icon="fa-paper-plane"/>
-                  <field name="outbound_test_result" readonly="1" colspan="2"/>
+                  <field name="outbound_test_result" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="0" colspan="2"/>
                 </group>
               </page>
             </notebook>
