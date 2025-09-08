@@ -1,0 +1,5 @@
+{
+  "model": "sale.order",
+  "fields": ["id", "name", "partner_id.name", "order_line.product_id.name"],
+  "extra": {"source": "odoo", "event": "order_export"}
+}

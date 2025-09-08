@@ -1,6 +1,6 @@
 {
-  "model": "res.partner",
+  "model": "sale.order",
   "method": "read",
-  "ids": [1, 2],
-  "fields": ["name", "email", "mobile"]
+  "ids": [1],
+  "fields": ["id", "name", "partner_id.name", "order_line.product_id.name"]
 }

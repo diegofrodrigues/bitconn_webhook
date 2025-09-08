@@ -49,6 +49,79 @@ class BitconnWebhook(models.Model):
         help='Stores the latest HTTP status and response body from a test send.'
     )
 
+    # -------- Utilities: extract fields with dot-notation --------
+    def _extract_fields(self, recs, field_names):
+        """Return list of dicts for recs with given field_names, supporting dot notation.
+        - Simple fields are read via recs.read(simple)
+        - Dotted fields (e.g., partner_id.name, order_line.product_id.name) are resolved per record
+          and flattened: m2o -> single value (id unless a final scalar is requested),
+          o2m/m2m -> list of values.
+        """
+        simple, dotted = [], []
+        for f in (field_names or []):
+            (dotted.append(f) if '.' in f else simple.append(f))
+
+        base_rows = recs.read(simple) if simple else [{'id': r.id} for r in recs]
+
+        def _path_values(start_rec, path_str):
+            parts = path_str.split('.')
+            current = [start_rec]
+
+            for seg in parts:
+                next_items = []
+                for item in current:
+                    if not item:
+                        continue
+                    if isinstance(item, models.BaseModel):
+                        # Access field; for multi-record item, Odoo returns aggregated; iterate explicitly
+                        try:
+                            # iterate each record if multiple
+                            items = [item] if len(item) <= 1 else [x for x in item]
+                        except Exception:
+                            items = [item]
+                        for it in items:
+                            try:
+                                val = it[seg]
+                            except Exception:
+                                val = False
+                            if isinstance(val, models.BaseModel):
+                                # relation -> keep recordsets/records to traverse next
+                                if len(val) <= 1:
+                                    next_items.append(val)
+                                else:
+                                    next_items.extend([x for x in val])
+                            else:
+                                # scalar -> just carry value
+                                next_items.append(val)
+                    else:
+                        # scalar encountered before end of path
+                        next_items.append(False)
+                current = next_items
+
+            # Normalize final values
+            results = []
+            for v in current:
+                if isinstance(v, models.BaseModel):
+                    if len(v) == 1:
+                        # if final is a record, return its id
+                        results.append(v.id)
+                    elif len(v) > 1:
+                        results.extend([x.id for x in v])
+                    else:
+                        results.append(False)
+                else:
+                    results.append(v)
+            if not results:
+                return False
+            return results if len(results) != 1 else results[0]
+
+        if dotted:
+            for idx, rec in enumerate(recs):
+                row = base_rows[idx]
+                for f in dotted:
+                    row[f] = _path_values(rec, f)
+        return base_rows
+
     def action_test_outbound(self):
         for rec in self:
             if not rec.outbound_enabled:
@@ -223,7 +296,7 @@ class BitconnWebhook(models.Model):
             envu = self.env(user=self.user_id.id)
             recs = envu[model_name].search(domain or [], limit=limit or None, offset=offset or 0, order=order)
             if fields:
-                data = recs.read(fields)
+                data = self._extract_fields(recs, fields)
                 return {'ok': True, 'count': len(recs), 'records': data}
             return {'ok': True, 'count': len(recs), 'ids': recs.ids}
 
@@ -237,7 +310,7 @@ class BitconnWebhook(models.Model):
             recs = recs.exists()
             if not recs:
                 return {'ok': False, 'error': 'not_found'}
-            data = recs.read(fields) if fields else recs.read()
+            data = self._extract_fields(recs, fields) if fields else recs.read()
             return {'ok': True, 'records': data}
 
     def _get_model_schema(self, model_name, method='create'):
@@ -422,7 +495,7 @@ class BitconnWebhook(models.Model):
                 'count': len(recs),
             }
             if fields:
-                payload['records'] = recs.read(fields)
+                payload['records'] = self._extract_fields(recs, fields)
             else:
                 payload['ids'] = recs.ids
             if extra and isinstance(extra, dict):

@@ -1,8 +1,8 @@
 {
-  "model": "res.partner",
+  "model": "sale.order",
   "method": "search",
-  "domain": [["email", "=", "cliente@example.com"]],
-  "fields": ["id", "name", "email"],
+  "domain": [["name", "=", "S00001"]],
+  "fields": ["id", "name", "partner_id.name"],
   "limit": 5,
   "order": "id desc"
 }
