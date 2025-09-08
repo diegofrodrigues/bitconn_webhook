@@ -1,0 +1,10 @@
+{
+  "ok": true,
+  "fields": [
+    "id",
+    "name",
+    "partner_id.name",
+    "order_line.name",
+    "order_line.price_unit"
+  ]
+}

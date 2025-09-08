@@ -10,11 +10,17 @@
         <xpath expr="//sheet" position="inside">
           <group name="bitconn_webhook_section" invisible="state != 'bitconn_webhook'" col="2" class="w-100">
             <field name="bitconn_webhook_id"/>
-            <field name="bitconn_field_ids" widget="many2many_tags"/>
-            <field name="bitconn_extra_json" placeholder='{"source":"odoo"}'/>
+            <field name="bitconn_manual_payload"/>
+            <div class="o_form_label text-muted" invisible="not bitconn_manual_payload">When Manual Payload is enabled, the payload below is sent as-is.</div>
+            <field name="bitconn_manual_payload_text" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_manual_payload" placeholder='{"fields":[]}'/>
+
+            <field name="bitconn_field_ids" widget="many2many_tags" invisible="bitconn_manual_payload"/>
             <separator string="Preview"/>
             <button name="action_generate_bitconn_preview" type="object" string="Regenerate Preview" class="btn-secondary"/>
-            <field name="bitconn_preview_payload" nolabel="1" widget="code" options="{'mode': 'javascript'}" class="w-100" colspan="2" placeholder='{"model": "res.partner", "records": [{"name": "string"}]}'/>
+            <button name="action_capture_bitconn_payload" type="object" string="Capture JSON" class="btn-primary"/>
+            <field name="bitconn_preview_payload" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" placeholder='{"model": "res.partner", "records": [{"name": "string"}]}'/>
+            <separator string="Last Result"/>
+            <field name="bitconn_last_result" nolabel="1" widget="text" class="w-100" colspan="2" readonly="1"/>
           </group>
         </xpath>
       </field>

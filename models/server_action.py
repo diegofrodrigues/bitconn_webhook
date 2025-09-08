@@ -15,15 +15,34 @@ class IrActionsServer(models.Model):
         domain="[('model_id','=',model_id),('store','=',True)]",
         help='If empty, only IDs are sent. If set, selected fields are included in records.'
     )
-    bitconn_extra_json = fields.Text(string='Extra JSON', help='Optional JSON object merged into payload root')
     bitconn_preview_payload = fields.Text(
         string='Preview JSON',
-        help='Editable preview of the JSON body that will be sent. You can modify it manually or regenerate from selected fields.',
+    help='Editable preview of the JSON body that will be sent. You can modify it manually or regenerate from selected fields.',
     )
+    bitconn_manual_payload = fields.Boolean(
+        string='Manual Payload',
+    help='Enable to write the payload manually below and send it as-is.'
+    )
+    bitconn_manual_payload_text = fields.Text(
+        string='Manual Payload (JSON)',
+    help='If Manual Payload is enabled, this JSON body will be sent as-is. Must be a JSON object.'
+    )
+    bitconn_last_result = fields.Text(
+        string='Last Result',
+        readonly=True,
+        help='Latest HTTP status and response body from running this Server Action.'
+    )
+    # Relational fields via dot-notation are no longer supported in Server Actions.
 
-    @api.onchange('bitconn_field_ids', 'model_id')
+    @api.onchange('bitconn_field_ids', 'model_id', 'bitconn_manual_payload', 'bitconn_manual_payload_text')
     def _onchange_bitconn_preview(self):
         for rec in self:
+            # If manual mode is enabled and no body yet, prefill with a minimal template
+            if rec.bitconn_manual_payload and not rec.bitconn_manual_payload_text:
+                try:
+                    rec.bitconn_manual_payload_text = json.dumps({'fields': []}, indent=2, ensure_ascii=False)
+                except Exception:
+                    rec.bitconn_manual_payload_text = '{"fields": []}'
             # Only auto-fill if empty to avoid overwriting manual edits
             if not rec.bitconn_preview_payload:
                 rec.bitconn_preview_payload = rec._generate_bitconn_preview()
@@ -35,26 +54,29 @@ class IrActionsServer(models.Model):
 
     def _generate_bitconn_preview(self):
         self.ensure_one()
+        # If manual payload enabled and present, show it
+        if self.bitconn_manual_payload and self.bitconn_manual_payload_text:
+            try:
+                base = json.loads(self.bitconn_manual_payload_text) or {}
+                if not isinstance(base, dict):
+                    base = {'_manual_payload': self.bitconn_manual_payload_text}
+            except Exception:
+                base = {'_manual_payload': self.bitconn_manual_payload_text}
+            return json.dumps(base, indent=2, ensure_ascii=False)
+
         model_name = self.model_id.model or 'res.partner'
         field_names = self.bitconn_field_ids.mapped('name') if self.bitconn_field_ids else []
+        combined_fields = list(dict.fromkeys(field_names))
         # Build a sample payload matching send_outbound behavior
         payload = {
             'model': model_name,
         }
-        if field_names:
+        if combined_fields:
             payload['count'] = 1
-            payload['records'] = [self._sample_record_for_model(model_name, field_names)]
+            payload['records'] = [self._sample_record_for_model(model_name, combined_fields)]
         else:
             payload['count'] = 0
             payload['ids'] = []
-        # Merge Extra JSON keys if any (just as a hint for preview)
-        if self.bitconn_extra_json:
-            try:
-                extra = json.loads(self.bitconn_extra_json)
-                if isinstance(extra, dict):
-                    payload.update({k: v for k, v in extra.items() if k not in ('records', 'ids')})
-            except Exception:
-                pass
         try:
             return json.dumps(payload, indent=2, ensure_ascii=False)
         except Exception:
@@ -94,14 +116,262 @@ class IrActionsServer(models.Model):
         ctx = self._context or {}
         active_ids = ctx.get('active_ids') or []
         recs = self.env[model_name].browse(active_ids).exists()
-        fields_list = self.bitconn_field_ids.mapped('name') if self.bitconn_field_ids else None
-        extra = None
-        if self.bitconn_extra_json:
+        # If manual payload: send body as-is
+        if self.bitconn_manual_payload and self.bitconn_manual_payload_text:
+            body = {}
             try:
-                parsed = json.loads(self.bitconn_extra_json)
-                if isinstance(parsed, dict):
-                    extra = parsed
+                body = json.loads(self.bitconn_manual_payload_text) or {}
             except Exception:
-                extra = None
-        self.bitconn_webhook_id.send_outbound(model_name, ids=recs.ids, fields=fields_list, extra=extra)
+                # send raw text as string payload
+                body = {'_payload': self.bitconn_manual_payload_text}
+            # Resolve placeholders from active records when using {{ path }} or ${path}
+            try:
+                # If 'fields' is provided, build records via _extract_fields (same scheme as read/search)
+                if isinstance(body, dict) and isinstance(body.get('fields'), list):
+                    fields_list = [str(f).strip() for f in body.get('fields') if str(f).strip()]
+                    payload = dict(body)
+                    payload['model'] = model_name
+                    payload['count'] = len(recs)
+                    if fields_list:
+                        payload['records'] = self.bitconn_webhook_id._extract_fields(recs, fields_list)
+                    else:
+                        payload['ids'] = recs.ids
+                    payload.pop('fields', None)
+                    body = payload
+                else:
+                    import re
+                    placeholder_re = re.compile(r"^(?:\$\{\s*([A-Za-z0-9_\.]+)\s*\}|\{\{\s*([A-Za-z0-9_\.]+)\s*\}\})$")
+
+                def get_path_value(rec, path):
+                    try:
+                        rows = self.bitconn_webhook_id._extract_fields(rec, [path])
+                        if rows and isinstance(rows, list):
+                            return rows[0].get(path)
+                    except Exception:
+                        return None
+                    return None
+
+                def resolve_node(node, rec):
+                    if isinstance(node, dict):
+                        return {k: resolve_node(v, rec) for k, v in node.items()}
+                    if isinstance(node, list):
+                        return [resolve_node(v, rec) for v in node]
+                    if isinstance(node, str):
+                        m = placeholder_re.match(node.strip())
+                        if m:
+                            path = m.group(1) or m.group(2)
+                            return get_path_value(rec, path)
+                        return node
+                    return node
+
+                if isinstance(body, dict) and recs and 'fields' not in body:
+                    # If records is a single-template list, expand per active record
+                    if isinstance(body.get('records'), list) and len(body['records']) == 1:
+                        template = body['records'][0]
+                        body['records'] = [resolve_node(template, r) for r in recs]
+                        body['count'] = len(recs)
+                        if 'model' not in body and model_name:
+                            body['model'] = model_name
+                    elif isinstance(body.get('records'), list) and len(body['records']) >= 1:
+                        # Resolve each record item against matching rec; extra items use last rec
+                        resolved = []
+                        for idx, item in enumerate(body['records']):
+                            rec_match = recs[idx] if idx < len(recs) else recs[-1]
+                            resolved.append(resolve_node(item, rec_match))
+                        body['records'] = resolved
+                        body['count'] = len(body['records'])
+                        if 'model' not in body and model_name:
+                            body['model'] = model_name
+                    else:
+                        # Resolve placeholders in the whole body using the first record
+                        first = recs[0]
+                        body = resolve_node(body, first)
+                        if 'model' not in body and model_name:
+                            body['model'] = model_name
+            except Exception:
+                # On any resolution error, keep original body
+                pass
+            # direct send using webhook config
+            try:
+                import requests, json as _json
+                headers = {'Content-Type': 'application/json'}
+                # merge configured headers
+                if self.bitconn_webhook_id.outbound_headers:
+                    try:
+                        hdrs = json.loads(self.bitconn_webhook_id.outbound_headers)
+                        if isinstance(hdrs, dict):
+                            headers.update({str(k): str(v) for k, v in hdrs.items()})
+                    except Exception:
+                        pass
+                url = self.bitconn_webhook_id.outbound_url
+                data = _json.dumps(body, ensure_ascii=False)
+                resp = requests.post(url, data=data, headers=headers, timeout=15)
+                # Format result: Status + pretty body when JSON
+                formatted = resp.text or ''
+                try:
+                    ctype = (resp.headers.get('Content-Type') or '').lower()
+                except Exception:
+                    ctype = ''
+                if 'application/json' in ctype or (formatted.strip().startswith('{') or formatted.strip().startswith('[')):
+                    try:
+                        parsed = resp.json()
+                    except Exception:
+                        try:
+                            parsed = json.loads(formatted)
+                        except Exception:
+                            parsed = None
+                    if parsed is not None:
+                        try:
+                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
+                        except Exception:
+                            pass
+                self.sudo().write({'bitconn_last_result': f"Status: {resp.status_code}\nBody:\n{formatted}"})
+            except Exception as e:
+                self.sudo().write({'bitconn_last_result': f"Error: {e}"})
+            return False
+
+        # Otherwise: build fields list and use helper
+        base_fields = self.bitconn_field_ids.mapped('name') if self.bitconn_field_ids else []
+        fields_list = list(dict.fromkeys(base_fields)) or None
+        result = self.bitconn_webhook_id.send_outbound(model_name, ids=recs.ids, fields=fields_list, extra=None)
+        # Format and store result on the action for visibility
+        try:
+            if result and result.get('error'):
+                self.sudo().write({'bitconn_last_result': f"Error: {result.get('error')}"})
+            else:
+                status = result.get('status') if isinstance(result, dict) else None
+                text = result.get('response') if isinstance(result, dict) else ''
+                formatted = text or ''
+                if formatted:
+                    try:
+                        if formatted.strip().startswith('{') or formatted.strip().startswith('['):
+                            parsed = json.loads(formatted)
+                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
+                    except Exception:
+                        pass
+                self.sudo().write({'bitconn_last_result': f"Status: {status}\nBody:\n{formatted}"})
+        except Exception:
+            # best-effort only
+            pass
         return False
+
+    def action_capture_bitconn_payload(self):
+        """Materialize the JSON payload (manual or automatic) into the preview field without sending."""
+        for rec in self:
+            try:
+                model_name = rec.model_id.model
+                ctx = rec._context or {}
+                active_ids = ctx.get('active_ids') or []
+                recs = rec.env[model_name].browse(active_ids).exists()
+                payload = None
+
+                if rec.bitconn_manual_payload and rec.bitconn_manual_payload_text:
+                    body = {}
+                    try:
+                        body = json.loads(rec.bitconn_manual_payload_text) or {}
+                    except Exception:
+                        body = {'_payload': rec.bitconn_manual_payload_text}
+
+                    # If 'fields' provided, build search-like payload
+                    if isinstance(body, dict) and isinstance(body.get('fields'), list):
+                        fields_list = [str(f).strip() for f in body.get('fields') if str(f).strip()]
+                        payload = dict(body)
+                        payload['model'] = model_name
+                        payload['count'] = len(recs)
+                        try:
+                            if fields_list:
+                                if rec.bitconn_webhook_id:
+                                    payload['records'] = rec.bitconn_webhook_id._extract_fields(recs, fields_list)
+                                else:
+                                    # Fallback: plain read for simple fields (no dot-notation)
+                                    payload['records'] = recs.read(fields_list) if recs else []
+                            else:
+                                payload['ids'] = recs.ids
+                        finally:
+                            payload.pop('fields', None)
+                    else:
+                        # Resolve placeholders against records
+                        import re
+                        placeholder_re = re.compile(r"^(?:\$\{\s*([A-Za-z0-9_\.]+)\s*\}|\{\{\s*([A-Za-z0-9_\.]+)\s*\}\})$")
+
+                        def get_path_value(rec_browse, path):
+                            try:
+                                if rec.bitconn_webhook_id:
+                                    rows = rec.bitconn_webhook_id._extract_fields(rec_browse, [path])
+                                else:
+                                    # Fallback: only plain fields
+                                    rows = [{path: rec_browse.read([path])[0].get(path)}]
+                                if rows and isinstance(rows, list):
+                                    return rows[0].get(path)
+                            except Exception:
+                                return None
+                            return None
+
+                        def resolve_node(node, rec_browse):
+                            if isinstance(node, dict):
+                                return {k: resolve_node(v, rec_browse) for k, v in node.items()}
+                            if isinstance(node, list):
+                                return [resolve_node(v, rec_browse) for v in node]
+                            if isinstance(node, str):
+                                m = placeholder_re.match(node.strip())
+                                if m:
+                                    path = m.group(1) or m.group(2)
+                                    return get_path_value(rec_browse, path)
+                                return node
+                            return node
+
+                        if isinstance(body, dict) and recs and 'fields' not in body:
+                            payload = dict(body)
+                            if isinstance(payload.get('records'), list) and len(payload['records']) == 1:
+                                template = payload['records'][0]
+                                payload['records'] = [resolve_node(template, r) for r in recs]
+                                payload['count'] = len(recs)
+                                if 'model' not in payload and model_name:
+                                    payload['model'] = model_name
+                            elif isinstance(payload.get('records'), list) and len(payload['records']) >= 1:
+                                resolved = []
+                                for idx, item in enumerate(payload['records']):
+                                    rec_match = recs[idx] if idx < len(recs) else recs[-1]
+                                    resolved.append(resolve_node(item, rec_match))
+                                payload['records'] = resolved
+                                payload['count'] = len(payload['records'])
+                                if 'model' not in payload and model_name:
+                                    payload['model'] = model_name
+                            else:
+                                first = recs[0]
+                                payload = resolve_node(body, first)
+                                if isinstance(payload, dict) and 'model' not in payload and model_name:
+                                    payload['model'] = model_name
+                        else:
+                            payload = body
+                else:
+                    # Automatic mode: build from selected fields
+                    base_fields = rec.bitconn_field_ids.mapped('name') if rec.bitconn_field_ids else []
+                    fields_list = list(dict.fromkeys(base_fields))
+                    payload = {'model': model_name, 'count': len(recs)}
+                    if fields_list:
+                        try:
+                            if rec.bitconn_webhook_id:
+                                payload['records'] = rec.bitconn_webhook_id._extract_fields(recs, fields_list)
+                            else:
+                                payload['records'] = recs.read(fields_list) if recs else []
+                        except Exception:
+                            payload['records'] = recs.read(fields_list) if recs else []
+                    else:
+                        payload['ids'] = recs.ids
+
+                try:
+                    preview_text = json.dumps(payload, indent=2, ensure_ascii=False)
+                except Exception:
+                    preview_text = str(payload)
+                rec.sudo().write({
+                    'bitconn_preview_payload': preview_text,
+                    'bitconn_last_result': f"Status: 200\nBody:\n{preview_text}",
+                })
+            except Exception as e:
+                msg = f"Error capturing payload: {e}"
+                rec.sudo().write({
+                    'bitconn_preview_payload': msg,
+                    'bitconn_last_result': msg,
+                })
+        return True

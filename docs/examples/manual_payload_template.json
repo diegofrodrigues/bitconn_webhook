@@ -1,0 +1,11 @@
+{
+  "records": [
+    {
+      "id": "{{ id }}",
+      "name": "${name}",
+      "customer": "{{ partner_id.name }}",
+      "line_names": "${order_line.name}",
+      "line_prices": "{{ order_line.price_unit }}"
+    }
+  ]
+}
