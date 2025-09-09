@@ -1,0 +1,13 @@
+{
+  "model": "sale.order",
+  "method": "search",
+  "domain": [["state", "=", "sale"]],
+  "limit": 3,
+  "fields": [
+    "id",
+    "name",
+    {"partner_id": ["id", "name", "email"]},
+    {"order_line": ["id", "name", "price_unit"]},
+    "partner_id.country_id.code"
+  ]
+}

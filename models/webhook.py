@@ -296,7 +296,11 @@ class BitconnWebhook(models.Model):
             envu = self.env(user=self.user_id.id)
             recs = envu[model_name].search(domain or [], limit=limit or None, offset=offset or 0, order=order)
             if fields:
-                data = self._extract_fields(recs, fields)
+                try:
+                    data = self._extract_fields_advanced(recs, fields)
+                except Exception:
+                    # fallback para versão simples se algo falhar
+                    data = self._extract_fields(recs, [f for f in fields if isinstance(f, str)])
                 return {'ok': True, 'count': len(recs), 'records': data}
             return {'ok': True, 'count': len(recs), 'ids': recs.ids}
 
@@ -310,8 +314,132 @@ class BitconnWebhook(models.Model):
             recs = recs.exists()
             if not recs:
                 return {'ok': False, 'error': 'not_found'}
-            data = self._extract_fields(recs, fields) if fields else recs.read()
+            if fields:
+                try:
+                    data = self._extract_fields_advanced(recs, fields)
+                except Exception:
+                    data = self._extract_fields(recs, [f for f in fields if isinstance(f, str)])
+            else:
+                data = recs.read()
             return {'ok': True, 'records': data}
+
+    # ---------------- Advanced field extraction (supports dict spec) -----------------
+    def _extract_fields_advanced(self, recs, fields_spec):
+        """Extração avançada preservando a ordem definida em fields_spec.
+        Suporta mistura de strings (inclui dot-notation) e dicts para relações.
+        Exemplo de fields_spec:
+          ["id", "name", {"partner_id": ["id","name"]}, {"order_line": ["id","name","price_unit"]}]
+
+        Regras:
+          - many2one -> objeto {subfields...} (se subfields vazio: {"id": id})
+          - one2many/many2many -> SEMPRE lista de objetos (ordem preservada). Não há mais 'mode'.
+          - Ordem dos campos no registro segue exatamente a ordem em fields_spec.
+          - Ordem dos subcampos segue a sequência fornecida; se 'id' estiver na lista, fica onde foi colocado.
+            Se 'id' não for listado, mas queremos garantir alguma referência, não adicionamos implicitamente (comportamento explícito).
+          - Strings com dot-notation retornam valor escalar como antes.
+        """
+        spec = fields_spec or []
+        # Separar strings (para extração base) das definições avançadas
+        string_specs = [s for s in spec if isinstance(s, str)]
+        dict_specs = [d for d in spec if isinstance(d, dict)]
+
+        # Extração inicial para todas as strings (inclui dotted)
+        base_rows = self._extract_fields(recs, string_specs) if string_specs else [{'id': r.id} for r in recs]
+        # Transformar base_rows em mapa index->campo->valor para fácil acesso
+        base_maps = []
+        for row in base_rows:
+            base_maps.append(dict(row))  # já contém valores simples
+
+        # Função para serializar relação preservando ordem dos subcampos
+        def serialize_relation(recordset, subfields):
+            if not recordset:
+                return []
+            subfields = subfields or []
+            # Usar read quando possível para performance
+            try:
+                data_rows = recordset.read(list(dict.fromkeys(subfields))) if subfields else recordset.read(['id'])
+            except Exception:
+                data_rows = []
+                for r in recordset:
+                    entry = {'id': r.id}
+                    for sf in subfields:
+                        try:
+                            entry[sf] = r[sf]
+                        except Exception:
+                            entry[sf] = False
+                    data_rows.append(entry)
+            out = []
+            for dr in data_rows:
+                obj = {}
+                if subfields:
+                    for sf in subfields:
+                        if sf == 'id' and 'id' not in dr:
+                            obj['id'] = recordset[0].id  # fallback improvável
+                        else:
+                            obj[sf] = dr.get(sf)
+                else:
+                    obj['id'] = dr.get('id')
+                out.append(obj)
+            return out
+
+        # Pré-processar dict specs: [{field: conf}, ...]
+        parsed_rel_specs = []
+        for d in dict_specs:
+            for fname, conf in d.items():
+                if isinstance(conf, dict):
+                    subf = conf.get('fields') or []
+                elif isinstance(conf, (list, tuple)):
+                    subf = list(conf)
+                else:
+                    subf = []
+                subf = [str(x) for x in subf if isinstance(x, str) and x]
+                parsed_rel_specs.append((fname, subf))
+
+        # Construir registros finais preservando ordem global
+        final_rows = []
+        for idx, rec in enumerate(recs):
+            ordered_row = {}
+            # Mapeamento rápido dos specs avançados (fname -> subfields)
+            rel_map = {fname: subf for fname, subf in parsed_rel_specs}
+            for item in spec:
+                if isinstance(item, str):
+                    # valor já extraído
+                    ordered_row[item] = base_maps[idx].get(item)
+                else:  # dict
+                    for fname, conf in item.items():
+                        subf = rel_map.get(fname, [])
+                        # Obter valor relacional
+                        try:
+                            val = rec[fname]
+                        except Exception:
+                            ordered_row[fname] = False
+                            continue
+                        # Detectar tipo de campo
+                        try:
+                            fdef = rec._fields.get(fname)
+                            ftype = getattr(fdef, 'type', None)
+                        except Exception:
+                            ftype = None
+                        if ftype == 'many2one':
+                            if val:
+                                lst = serialize_relation(val, subf) if subf else [{'id': val.id}]
+                                ordered_row[fname] = lst[0] if lst else False
+                            else:
+                                ordered_row[fname] = False
+                        elif ftype in ('one2many', 'many2many'):
+                            if val:
+                                lst = serialize_relation(val, subf) if subf else [{'id': x.id} for x in val]
+                                ordered_row[fname] = lst  # sempre lista
+                            else:
+                                ordered_row[fname] = []
+                        else:
+                            # Campo simples enviado como dict (edge) -> copiar valor bruto
+                            try:
+                                ordered_row[fname] = rec[fname]
+                            except Exception:
+                                ordered_row[fname] = False
+            final_rows.append(ordered_row)
+        return final_rows
 
     def _get_model_schema(self, model_name, method='create'):
         """Return field metadata and required info for a model for integration scaffolding."""
