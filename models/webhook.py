@@ -17,8 +17,10 @@ class BitconnWebhook(models.Model):
     can_unlink = fields.Boolean(string='Can Unlink', default=False, help='Dangerous. Only enable if you really trust the caller.', tracking=True)
     allowed_model_ids = fields.Many2many('ir.model', string='Allowed Models', help='Restrict operations to these models. Leave empty to allow all models.', tracking=True)
 
+    # Sensitive fields: avoid standard tracking to prevent exposing full values; custom masked logging in write()
     secret_key = fields.Char(string='Secret Key', readonly=True, copy=False)
     webhook_uuid = fields.Char(string='Webhook UUID', readonly=True, copy=False)
+    # Computed URL (not stored to avoid DB column); we log masked changes when uuid changes
     webhook_url = fields.Char(string='Webhook URL', compute='_compute_webhook_url', compute_sudo=True)
     # Minimal outbound config (simple direct POST)
     outbound_enabled = fields.Boolean(string='Enable Outbound', default=False, tracking=True)
@@ -172,27 +174,24 @@ class BitconnWebhook(models.Model):
         recs = super().create(vals_list)
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', 'http://localhost:8069')
         for rec in recs:
+            # single write so custom masked logging captures both secret & url
+            updates = {}
             if not rec.secret_key:
-                rec.secret_key = secrets.token_urlsafe(32)
+                updates['secret_key'] = secrets.token_urlsafe(32)
             if not rec.webhook_uuid:
-                rec.webhook_uuid = str(uuid.uuid4())
-            # compute field webhook_url will pick updated values
+                updates['webhook_uuid'] = str(uuid.uuid4())
+            if updates:
+                rec.write(updates)
         return recs
 
     def action_regenerate_credentials(self):
+        # Update only; rely on field tracking to log changes (avoid duplicate custom messages)
         for rec in self:
-            rec.secret_key = secrets.token_urlsafe(32)
-            rec.webhook_uuid = str(uuid.uuid4())
-            # Log masked credentials change
-            try:
-                rec.message_post(
-                    body=(
-                        f"Credentials regenerated:<br/>")
-                        + (f"URL: …{(rec.webhook_url or '')[-4:]}<br/>" if rec.webhook_url else "")
-                        + (f"Secret: ****{(rec.secret_key or '')[-4:]}" if rec.secret_key else "")
-                )
-            except Exception:
-                pass
+            rec.write({
+                'secret_key': secrets.token_urlsafe(32),
+                'webhook_uuid': str(uuid.uuid4()),
+            })
+        return True
 
     def action_set_outbound_auth(self):
         """Fill outbound_headers with an Authorization: Bearer template using this webhook's secret.
@@ -665,15 +664,20 @@ class BitconnWebhook(models.Model):
         }
         res = super().write(vals)
         to_log = track_fields.intersection(vals.keys())
+        # If uuid changed, the computed URL changes too; force log of masked URL
+        if 'webhook_uuid' in vals:
+            to_log.add('webhook_url')
+        if self.env.context.get('bitconn_skip_sensitive_log'):
+            to_log = {f for f in to_log if f not in {'secret_key', 'webhook_url'}}
         if to_log:
             for rec in self:
                 try:
                     orig = originals.get(rec.id, {})
-                    lines = []
+                    changes = []
                     if 'webhook_url' in to_log and rec.webhook_url != orig.get('webhook_url'):
-                        lines.append(f"Webhook URL: …{(rec.webhook_url or '')[-4:]}")
+                        changes.append(f"Webhook URL: ****{(rec.webhook_url or '')[-4:]}")
                     if 'secret_key' in to_log and rec.secret_key != orig.get('secret_key'):
-                        lines.append(f"Secret Key: ****{(rec.secret_key or '')[-4:]}")
+                        changes.append(f"Secret Key: ****{(rec.secret_key or '')[-4:]}")
                     if 'outbound_headers' in to_log and rec.outbound_headers != orig.get('outbound_headers'):
                         def summarize(hdr_txt):
                             try:
@@ -694,9 +698,9 @@ class BitconnWebhook(models.Model):
                         desc = f"Outbound Headers: keys={keys}"
                         if masked_auth:
                             desc += f", Authorization={masked_auth}"
-                        lines.append(desc)
-                    if lines:
-                        rec.message_post(body="<br/>".join(lines))
+                        changes.append(desc)
+                    if changes:
+                        rec.message_post(body=" | ".join(changes))
                 except Exception:
                     continue
         return res

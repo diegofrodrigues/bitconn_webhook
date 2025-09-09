@@ -17,7 +17,6 @@
             <field name="bitconn_field_ids" widget="many2many_tags" invisible="bitconn_manual_payload"/>
             <separator string="Preview"/>
             <button name="action_generate_bitconn_preview" type="object" string="Regenerate Preview" class="btn-secondary"/>
-            <button name="action_capture_bitconn_payload" type="object" string="Capture JSON" class="btn-primary"/>
             <field name="bitconn_preview_payload" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" placeholder='{"model": "res.partner", "records": [{"name": "string"}]}'/>
             <separator string="Last Result"/>
             <field name="bitconn_last_result" nolabel="1" widget="text" class="w-100" colspan="2" readonly="1"/>

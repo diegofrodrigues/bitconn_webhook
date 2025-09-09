@@ -6,7 +6,7 @@ class IrActionsServer(models.Model):
     _inherit = 'ir.actions.server'
 
     state = fields.Selection(
-        selection_add=[('bitconn_webhook', 'Webhook')],
+        selection_add=[('bitconn_webhook', 'Bitconn Webhook')],
         ondelete={'bitconn_webhook': 'set default'}
     )
     bitconn_webhook_id = fields.Many2one('bitconn.webhook', string='Webhook', help='Webhook configuration to use for outbound send')
@@ -126,14 +126,19 @@ class IrActionsServer(models.Model):
                 body = {'_payload': self.bitconn_manual_payload_text}
             # Resolve placeholders from active records when using {{ path }} or ${path}
             try:
-                # If 'fields' is provided, build records via _extract_fields (same scheme as read/search)
+                # If 'fields' provided: use advanced extraction (supports dict spec like [{"partner_id": ["id","name"]}])
                 if isinstance(body, dict) and isinstance(body.get('fields'), list):
-                    fields_list = [str(f).strip() for f in body.get('fields') if str(f).strip()]
+                    spec = [f for f in body.get('fields') if isinstance(f, (str, dict))]
                     payload = dict(body)
                     payload['model'] = model_name
                     payload['count'] = len(recs)
-                    if fields_list:
-                        payload['records'] = self.bitconn_webhook_id._extract_fields(recs, fields_list)
+                    if spec:
+                        try:
+                            payload['records'] = self.bitconn_webhook_id._extract_fields_advanced(recs, spec)
+                        except Exception:
+                            # fallback to simple extraction with only string fields
+                            simple = [f for f in spec if isinstance(f, str)]
+                            payload['records'] = self.bitconn_webhook_id._extract_fields(recs, simple)
                     else:
                         payload['ids'] = recs.ids
                     payload.pop('fields', None)
@@ -255,123 +260,4 @@ class IrActionsServer(models.Model):
             pass
         return False
 
-    def action_capture_bitconn_payload(self):
-        """Materialize the JSON payload (manual or automatic) into the preview field without sending."""
-        for rec in self:
-            try:
-                model_name = rec.model_id.model
-                ctx = rec._context or {}
-                active_ids = ctx.get('active_ids') or []
-                recs = rec.env[model_name].browse(active_ids).exists()
-                payload = None
-
-                if rec.bitconn_manual_payload and rec.bitconn_manual_payload_text:
-                    body = {}
-                    try:
-                        body = json.loads(rec.bitconn_manual_payload_text) or {}
-                    except Exception:
-                        body = {'_payload': rec.bitconn_manual_payload_text}
-
-                    # If 'fields' provided, build search-like payload
-                    if isinstance(body, dict) and isinstance(body.get('fields'), list):
-                        fields_list = [str(f).strip() for f in body.get('fields') if str(f).strip()]
-                        payload = dict(body)
-                        payload['model'] = model_name
-                        payload['count'] = len(recs)
-                        try:
-                            if fields_list:
-                                if rec.bitconn_webhook_id:
-                                    payload['records'] = rec.bitconn_webhook_id._extract_fields(recs, fields_list)
-                                else:
-                                    # Fallback: plain read for simple fields (no dot-notation)
-                                    payload['records'] = recs.read(fields_list) if recs else []
-                            else:
-                                payload['ids'] = recs.ids
-                        finally:
-                            payload.pop('fields', None)
-                    else:
-                        # Resolve placeholders against records
-                        import re
-                        placeholder_re = re.compile(r"^(?:\$\{\s*([A-Za-z0-9_\.]+)\s*\}|\{\{\s*([A-Za-z0-9_\.]+)\s*\}\})$")
-
-                        def get_path_value(rec_browse, path):
-                            try:
-                                if rec.bitconn_webhook_id:
-                                    rows = rec.bitconn_webhook_id._extract_fields(rec_browse, [path])
-                                else:
-                                    # Fallback: only plain fields
-                                    rows = [{path: rec_browse.read([path])[0].get(path)}]
-                                if rows and isinstance(rows, list):
-                                    return rows[0].get(path)
-                            except Exception:
-                                return None
-                            return None
-
-                        def resolve_node(node, rec_browse):
-                            if isinstance(node, dict):
-                                return {k: resolve_node(v, rec_browse) for k, v in node.items()}
-                            if isinstance(node, list):
-                                return [resolve_node(v, rec_browse) for v in node]
-                            if isinstance(node, str):
-                                m = placeholder_re.match(node.strip())
-                                if m:
-                                    path = m.group(1) or m.group(2)
-                                    return get_path_value(rec_browse, path)
-                                return node
-                            return node
-
-                        if isinstance(body, dict) and recs and 'fields' not in body:
-                            payload = dict(body)
-                            if isinstance(payload.get('records'), list) and len(payload['records']) == 1:
-                                template = payload['records'][0]
-                                payload['records'] = [resolve_node(template, r) for r in recs]
-                                payload['count'] = len(recs)
-                                if 'model' not in payload and model_name:
-                                    payload['model'] = model_name
-                            elif isinstance(payload.get('records'), list) and len(payload['records']) >= 1:
-                                resolved = []
-                                for idx, item in enumerate(payload['records']):
-                                    rec_match = recs[idx] if idx < len(recs) else recs[-1]
-                                    resolved.append(resolve_node(item, rec_match))
-                                payload['records'] = resolved
-                                payload['count'] = len(payload['records'])
-                                if 'model' not in payload and model_name:
-                                    payload['model'] = model_name
-                            else:
-                                first = recs[0]
-                                payload = resolve_node(body, first)
-                                if isinstance(payload, dict) and 'model' not in payload and model_name:
-                                    payload['model'] = model_name
-                        else:
-                            payload = body
-                else:
-                    # Automatic mode: build from selected fields
-                    base_fields = rec.bitconn_field_ids.mapped('name') if rec.bitconn_field_ids else []
-                    fields_list = list(dict.fromkeys(base_fields))
-                    payload = {'model': model_name, 'count': len(recs)}
-                    if fields_list:
-                        try:
-                            if rec.bitconn_webhook_id:
-                                payload['records'] = rec.bitconn_webhook_id._extract_fields(recs, fields_list)
-                            else:
-                                payload['records'] = recs.read(fields_list) if recs else []
-                        except Exception:
-                            payload['records'] = recs.read(fields_list) if recs else []
-                    else:
-                        payload['ids'] = recs.ids
-
-                try:
-                    preview_text = json.dumps(payload, indent=2, ensure_ascii=False)
-                except Exception:
-                    preview_text = str(payload)
-                rec.sudo().write({
-                    'bitconn_preview_payload': preview_text,
-                    'bitconn_last_result': f"Status: 200\nBody:\n{preview_text}",
-                })
-            except Exception as e:
-                msg = f"Error capturing payload: {e}"
-                rec.sudo().write({
-                    'bitconn_preview_payload': msg,
-                    'bitconn_last_result': msg,
-                })
-        return True
+    # capture json feature removed intentionally
