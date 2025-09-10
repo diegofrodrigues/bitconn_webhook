@@ -39,6 +39,47 @@
                   <field name="outbound_test_result" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="0" colspan="2"/>
                 </group>
               </page>
+              <page string="Help">
+                <group>
+                  <separator string="Create"/>
+                </group>
+                <group>
+                  <div class="text-muted" name="desc_create">Creates a new record. Use when an external system submits data to insert into Odoo. Required fields depend on the model (inspect schema if available).</div>
+                </group>
+                <group>
+                  <field name="example_create" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
+                </group>
+
+                <group>
+                  <separator string="Write"/>
+                </group>
+                <group>
+                  <div class="text-muted" name="desc_write">Updates records found by the domain. Use to change specific fields without recreating the record. Domain must return at least one record.</div>
+                </group>
+                <group>
+                  <field name="example_write" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
+                </group>
+
+                <group>
+                  <separator string="Unlink"/>
+                </group>
+                <group>
+                  <div class="text-muted" name="desc_unlink">Deletes records returned by the domain. Destructive operation; enable 'Can Unlink' and use carefully.</div>
+                </group>
+                <group>
+                  <field name="example_unlink" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
+                </group>
+
+                <group>
+                  <separator string="Search Advanced"/>
+                </group>
+                <group>
+                  <div class="text-muted" name="desc_search_adv">Searches records and returns structured data. Supports advanced spec in 'fields' using dict objects for nested relations. Can be used via the public endpoint or inside Server Actions (Manual Payload) to build outbound payloads.</div>
+                </group>
+                <group>
+                  <field name="example_search_advanced" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
+                </group>
+              </page>
             </notebook>
           </sheet>
             <chatter/>

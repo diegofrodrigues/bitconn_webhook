@@ -1,0 +1,12 @@
+{
+  "records": [
+    {
+      "order_id": "{{ id }}",
+      "name": "${name}",
+      "customer": "{{ partner_id.name }}",
+      "lines": "${order_line.name}",
+      "first_line_product_name": "${order_line.product_id.name}",
+      "first_line_product_code": "${order_line.product_id.default_code}" 
+    }
+  ]
+}

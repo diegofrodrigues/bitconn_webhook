@@ -135,10 +135,21 @@ class IrActionsServer(models.Model):
                     if spec:
                         try:
                             payload['records'] = self.bitconn_webhook_id._extract_fields_advanced(recs, spec)
-                        except Exception:
-                            # fallback to simple extraction with only string fields
+                        except Exception as e:
+                            # Registrar erro para diagnóstico e fazer fallback estendido
+                            try:
+                                self.sudo().write({'bitconn_last_result': f"Advanced extraction error: {e}"})
+                            except Exception:
+                                pass
+                            # Campos simples originais
                             simple = [f for f in spec if isinstance(f, str)]
-                            payload['records'] = self.bitconn_webhook_id._extract_fields(recs, simple)
+                            # Adiciona também os nomes relacionais (keys dos dicts) para ao menos retornar seus IDs/listas
+                            rel_names = []
+                            for f in spec:
+                                if isinstance(f, dict):
+                                    rel_names.extend(list(f.keys()))
+                            simple_extended = list(dict.fromkeys(simple + rel_names))
+                            payload['records'] = self.bitconn_webhook_id._extract_fields(recs, simple_extended)
                     else:
                         payload['ids'] = recs.ids
                     payload.pop('fields', None)

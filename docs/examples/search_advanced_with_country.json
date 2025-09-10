@@ -6,14 +6,12 @@
   "fields": [
     "id",
     "name",
-    {"partner_id": ["id", "name", "email"]},
+    {"partner_id": ["id", "name", "email", {"country_id": ["id", "code", "name"]}]},
     {"order_line": [
       "id",
       "name",
-      "product_uom_qty",
       "price_unit",
-      {"product_id": ["id", "default_code", "name"]}
+      {"product_id": ["id", "default_code", "name", "list_price"]}
     ]}
   ]
 }
-

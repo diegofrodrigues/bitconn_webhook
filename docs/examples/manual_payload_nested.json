@@ -1,8 +1,4 @@
 {
-  "model": "sale.order",
-  "method": "search",
-  "domain": [["state", "=", "sale"]],
-  "limit": 3,
   "fields": [
     "id",
     "name",
@@ -16,4 +12,3 @@
     ]}
   ]
 }
-

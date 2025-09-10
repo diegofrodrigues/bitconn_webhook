@@ -50,6 +50,17 @@ class BitconnWebhook(models.Model):
         readonly=True,
         help='Stores the latest HTTP status and response body from a test send.'
     )
+    # Help examples (JSON with common payloads)
+    examples_help = fields.Text(
+        string='Examples Help (JSON)',
+        compute='_compute_examples_help',
+        readonly=True,
+        help='JSON com exemplos de payload: create, write, unlink, search_advanced.'
+    )
+    example_create = fields.Text(string='Create Example', compute='_compute_examples_blocks', readonly=True)
+    example_write = fields.Text(string='Write Example', compute='_compute_examples_blocks', readonly=True)
+    example_unlink = fields.Text(string='Unlink Example', compute='_compute_examples_blocks', readonly=True)
+    example_search_advanced = fields.Text(string='Search Advanced Example', compute='_compute_examples_blocks', readonly=True)
 
     # -------- Utilities: extract fields with dot-notation --------
     def _extract_fields(self, recs, field_names):
@@ -324,120 +335,111 @@ class BitconnWebhook(models.Model):
 
     # ---------------- Advanced field extraction (supports dict spec) -----------------
     def _extract_fields_advanced(self, recs, fields_spec):
-        """Extração avançada preservando a ordem definida em fields_spec.
-        Suporta mistura de strings (inclui dot-notation) e dicts para relações.
-        Exemplo de fields_spec:
-          ["id", "name", {"partner_id": ["id","name"]}, {"order_line": ["id","name","price_unit"]}]
-
-        Regras:
-          - many2one -> objeto {subfields...} (se subfields vazio: {"id": id})
-          - one2many/many2many -> SEMPRE lista de objetos (ordem preservada). Não há mais 'mode'.
-          - Ordem dos campos no registro segue exatamente a ordem em fields_spec.
-          - Ordem dos subcampos segue a sequência fornecida; se 'id' estiver na lista, fica onde foi colocado.
-            Se 'id' não for listado, mas queremos garantir alguma referência, não adicionamos implicitamente (comportamento explícito).
-          - Strings com dot-notation retornam valor escalar como antes.
+        """Extração avançada com suporte a aninhamento de dicts dentro de relações.
+        Agora aceita specs como:
+          ["id", {"order_line": ["id", "name", {"product_id": ["id","default_code","name"]}]}]
+        para incluir campos de product_id dentro de cada linha.
+        Regras permanecem:
+          - many2one -> objeto
+          - one2many/many2many -> lista de objetos
+          - ordem preservada em todos os níveis
         """
         spec = fields_spec or []
-        # Separar strings (para extração base) das definições avançadas
-        string_specs = [s for s in spec if isinstance(s, str)]
-        dict_specs = [d for d in spec if isinstance(d, dict)]
 
-        # Extração inicial para todas as strings (inclui dotted)
-        base_rows = self._extract_fields(recs, string_specs) if string_specs else [{'id': r.id} for r in recs]
-        # Transformar base_rows em mapa index->campo->valor para fácil acesso
-        base_maps = []
-        for row in base_rows:
-            base_maps.append(dict(row))  # já contém valores simples
-
-        # Função para serializar relação preservando ordem dos subcampos
-        def serialize_relation(recordset, subfields):
-            if not recordset:
-                return []
-            subfields = subfields or []
-            # Usar read quando possível para performance
-            try:
-                data_rows = recordset.read(list(dict.fromkeys(subfields))) if subfields else recordset.read(['id'])
-            except Exception:
-                data_rows = []
-                for r in recordset:
-                    entry = {'id': r.id}
-                    for sf in subfields:
-                        try:
-                            entry[sf] = r[sf]
-                        except Exception:
-                            entry[sf] = False
-                    data_rows.append(entry)
+        # Helper recursivo para coletar strings dentro de uma sub-especificação (usado só quando entramos na relação)
+        def collect_all_strings(sub):
             out = []
-            for dr in data_rows:
-                obj = {}
-                if subfields:
-                    for sf in subfields:
-                        if sf == 'id' and 'id' not in dr:
-                            obj['id'] = recordset[0].id  # fallback improvável
-                        else:
-                            obj[sf] = dr.get(sf)
-                else:
-                    obj['id'] = dr.get('id')
-                out.append(obj)
+            for it in sub:
+                if isinstance(it, str):
+                    out.append(it)
+                elif isinstance(it, dict):
+                    for _k, _v in it.items():
+                        if isinstance(_v, (list, tuple)):
+                            out.extend(collect_all_strings(_v))
+                        elif isinstance(_v, dict):
+                            out.extend(collect_all_strings(_v.get('fields') or []))
             return out
 
-        # Pré-processar dict specs: [{field: conf}, ...]
-        parsed_rel_specs = []
-        for d in dict_specs:
-            for fname, conf in d.items():
-                if isinstance(conf, dict):
-                    subf = conf.get('fields') or []
-                elif isinstance(conf, (list, tuple)):
-                    subf = list(conf)
-                else:
-                    subf = []
-                subf = [str(x) for x in subf if isinstance(x, str) and x]
-                parsed_rel_specs.append((fname, subf))
+        # Para o nível raiz só precisamos dos campos string diretamente especificados ali.
+        base_field_strings = [f for f in spec if isinstance(f, str)]
+        base_rows = self._extract_fields(recs, base_field_strings) if base_field_strings else [{'id': r.id} for r in recs]
+        base_maps = [dict(r) for r in base_rows]
 
-        # Construir registros finais preservando ordem global
-        final_rows = []
-        for idx, rec in enumerate(recs):
-            ordered_row = {}
-            # Mapeamento rápido dos specs avançados (fname -> subfields)
-            rel_map = {fname: subf for fname, subf in parsed_rel_specs}
-            for item in spec:
+        def serialize_record(rec, rec_base_map, current_spec):
+            data = {}
+            for item in current_spec:
                 if isinstance(item, str):
-                    # valor já extraído
-                    ordered_row[item] = base_maps[idx].get(item)
-                else:  # dict
-                    for fname, conf in item.items():
-                        subf = rel_map.get(fname, [])
-                        # Obter valor relacional
+                    data[item] = rec_base_map.get(item)
+                elif isinstance(item, dict):
+                    for fname, subconf in item.items():
+                        # Preparar sub-especificação
+                        if isinstance(subconf, dict):
+                            sub_spec = subconf.get('fields') or []
+                        elif isinstance(subconf, (list, tuple)):
+                            sub_spec = list(subconf)
+                        else:
+                            sub_spec = []
                         try:
                             val = rec[fname]
                         except Exception:
-                            ordered_row[fname] = False
+                            data[fname] = False
                             continue
-                        # Detectar tipo de campo
-                        try:
-                            fdef = rec._fields.get(fname)
-                            ftype = getattr(fdef, 'type', None)
-                        except Exception:
-                            ftype = None
+                        fdef = rec._fields.get(fname)
+                        ftype = getattr(fdef, 'type', None) if fdef else None
                         if ftype == 'many2one':
-                            if val:
-                                lst = serialize_relation(val, subf) if subf else [{'id': val.id}]
-                                ordered_row[fname] = lst[0] if lst else False
+                            if not val:
+                                data[fname] = False
                             else:
-                                ordered_row[fname] = False
+                                if sub_spec:
+                                    # single record -> objeto
+                                    # Para many2one: podemos coletar todos os strings (subcampos diretos) normalmente
+                                    nested_strings = [s for s in sub_spec if isinstance(s, str)]
+                                    # incluir nomes de relações (para acessar depois recursivamente)
+                                    nested_strings += [k for d in sub_spec if isinstance(d, dict) for k in d.keys()]
+                                    nested_strings = list(dict.fromkeys(nested_strings))
+                                    inner_map = {'id': val.id}
+                                    if nested_strings:
+                                        try:
+                                            inner_base = self._extract_fields(val, nested_strings)[0]
+                                            inner_map.update(inner_base)
+                                        except Exception:
+                                            pass
+                                    data[fname] = serialize_record(val, inner_map, sub_spec)
+                                else:
+                                    data[fname] = {'id': val.id}
                         elif ftype in ('one2many', 'many2many'):
-                            if val:
-                                lst = serialize_relation(val, subf) if subf else [{'id': x.id} for x in val]
-                                ordered_row[fname] = lst  # sempre lista
+                            if not val:
+                                data[fname] = []
                             else:
-                                ordered_row[fname] = []
+                                if sub_spec:
+                                    # Para o recordset relacional: apenas campos simples + nomes de relações imediatas
+                                    nested_strings = [s for s in sub_spec if isinstance(s, str)]
+                                    nested_strings += [k for d in sub_spec if isinstance(d, dict) for k in d.keys()]
+                                    nested_strings = list(dict.fromkeys(nested_strings))
+                                    inner_maps = []
+                                    base_by_id = {}
+                                    if nested_strings:
+                                        try:
+                                            inner_base_rows = self._extract_fields(val, nested_strings)
+                                            base_by_id = {br.get('id'): br for br in inner_base_rows if br.get('id')}
+                                        except Exception:
+                                            pass
+                                    for vrec in val:
+                                        inner_maps.append(base_by_id.get(vrec.id, {'id': vrec.id}))
+                                    data[fname] = [serialize_record(vrec, imap, sub_spec) for vrec, imap in zip(val, inner_maps)]
+                                else:
+                                    data[fname] = [{'id': vrec.id} for vrec in val]
                         else:
-                            # Campo simples enviado como dict (edge) -> copiar valor bruto
+                            # Campo simples encapsulado em dict (edge case)
                             try:
-                                ordered_row[fname] = rec[fname]
+                                data[fname] = rec[fname]
                             except Exception:
-                                ordered_row[fname] = False
-            final_rows.append(ordered_row)
+                                data[fname] = False
+            return data
+
+        final_rows = []
+        for rec, base_map in zip(recs, base_maps):
+            final_rows.append(serialize_record(rec, base_map, spec))
         return final_rows
 
     def _get_model_schema(self, model_name, method='create'):
@@ -704,3 +706,84 @@ class BitconnWebhook(models.Model):
                 except Exception:
                     continue
         return res
+
+    # ---------------- Help examples compute -----------------
+    def _compute_examples_help(self):
+        # Custom compact formatting (single-line where feasible) for help aggregate
+        txt = (
+            '{\n'
+            '  "create": { "model": "res.partner", "method": "create", "values": { "name": "Cliente Webhook", "email": "cliente@example.com", "mobile": "+5511999999999" } },\n'
+            '  "write": { "model": "res.partner", "method": "write", "domain": [ [ "email", "=", "cliente@example.com" ] ], "values": { "comment": "Atualizado via webhook" } },\n'
+            '  "unlink": { "model": "res.partner", "method": "unlink", "domain": [ [ "id", "in", [ 10, 11 ] ] ] },\n'
+            '  "search_advanced": {\n'
+            '    "model": "sale.order",\n'
+            '    "method": "search",\n'
+            '    "domain": [ [ "state", "=", "sale" ] ],\n'
+            '    "limit": 2,\n'
+            '    "fields": [\n'
+            '      "id",\n'
+            '      "name",\n'
+            '      { "partner_id": [ "id", "name", "email" ] },\n'
+            '      { "order_line": [\n'
+            '          "id",\n'
+            '          "name",\n'
+            '          "product_uom_qty",\n'
+            '          "price_unit",\n'
+            '          { "product_id": [ "id", "default_code", "name" ] }\n'
+            '      ] }\n'
+            '    ]\n'
+            '  }\n'
+            '}'
+        )
+        for rec in self:
+            rec.examples_help = txt
+
+    def _compute_examples_blocks(self):
+        # Compact / semi-compact JSON strings for each example
+        c_txt = (
+            '{\n'
+            '  "model": "res.partner",\n'
+            '  "method": "create",\n'
+            '  "values": { "name": "Cliente Webhook", "email": "cliente@example.com", "mobile": "+5511999999999" }\n'
+            '}'
+        )
+        w_txt = (
+            '{\n'
+            '  "model": "res.partner",\n'
+            '  "method": "write",\n'
+            '  "domain": [ [ "email", "=", "cliente@example.com" ] ],\n'
+            '  "values": { "comment": "Atualizado via webhook" }\n'
+            '}'
+        )
+        u_txt = (
+            '{\n'
+            '  "model": "res.partner",\n'
+            '  "method": "unlink",\n'
+            '  "domain": [ [ "id", "in", [ 10, 11 ] ] ]\n'
+            '}'
+        )
+        s_txt = (
+            '{\n'
+            '  "model": "sale.order",\n'
+            '  "method": "search",\n'
+            '  "domain": [ [ "state", "=", "sale" ] ],\n'
+            '  "limit": 2,\n'
+            '  "fields": [\n'
+            '    "id",\n'
+            '    "name",\n'
+            '    { "partner_id": [ "id", "name", "email" ] },\n'
+            '    { "order_line": [\n'
+            '        "id",\n'
+            '        "name",\n'
+            '        "product_uom_qty",\n'
+            '        "price_unit",\n'
+            '        { "product_id": [ "id", "default_code", "name" ] }\n'
+            '    ] }\n'
+            '  ]\n'
+            '}'
+        )
+        for rec in self:
+            rec.example_create = c_txt
+            rec.example_write = w_txt
+            rec.example_unlink = u_txt
+            rec.example_search_advanced = s_txt
