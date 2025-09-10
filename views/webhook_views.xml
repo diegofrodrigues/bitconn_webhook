@@ -1,10 +1,77 @@
 <odoo>
   <data>
+    <!-- Donate Modal View (defined first so button reference works) -->
+    <record id="view_bitconn_webhook_donate_modal" model="ir.ui.view">
+      <field name="name">bitconn.webhook.donate.modal</field>
+      <field name="model">ir.actions.act_window</field>
+      <field name="arch" type="xml">
+        <form string="Support / Apoiar">
+          <group>
+            <group>
+              <p>
+                <span>
+                  If this module helped you, consider a donation (or buy me a beer 🍺) to keep development active!
+                </span>
+                <br/>
+                <span style="display:block;border-top:1px solid #ddd;margin:10px 0 8px 0;"></span>
+                <span>
+                  Se este módulo foi útil, considere fazer uma doação (ou pagar uma cerveja 🍺) para manter o desenvolvimento!
+                </span>
+                <br/><br/>
+                <strong>Pix Key / Chave Pix:</strong>
+                <br/>
+                <span style="font-size:12px; word-break:break-all; display:inline-block; margin-top:4px;">00020126810014br.gov.bcb.pix013655f22863-4cea-41e9-904c-df3ce0b241ef0219wa conn odoo module5204000053039865802BR5924Diego Ferreira Rodrigues6009Sao Paulo62290525REC68545B90764819659464106304D86E</span>
+              </p>
+            </group>
+            <group>
+              <div style="text-align:center; margin-top:10px;">
+                <img src="/bitconn_webhook/static/description/qr_code_donate.png" style="max-width:200px;display:block;margin:auto;" alt="Donate QR"/>
+                <span id="pix-feedback-bw" style="display:none;color:green;font-weight:bold;margin-left:10px;">Copied!</span>
+                <br/>
+                <a href="#" class="btn btn-secondary" role="button"
+                   onclick="navigator.clipboard.writeText('00020126810014br.gov.bcb.pix013655f22863-4cea-41e9-904c-df3ce0b241ef0219wa conn odoo module5204000053039865802BR5924Diego Ferreira Rodrigues6009Sao Paulo62290525REC68545B90764819659464106304D86E').then(function(){var m=document.getElementById('pix-feedback-bw');if(m){m.style.display='inline';setTimeout(function(){m.style.display='none';},2000);}}); return false;">
+                  Copy Pix Key
+                </a>
+              </div>
+            </group>
+          </group>
+          <footer>
+            <button string="Close" class="btn-secondary" special="cancel"/>
+          </footer>
+        </form>
+      </field>
+    </record>
+
+    <record id="bitconn_webhook_donate_modal_action" model="ir.actions.act_window">
+      <field name="name">Donate</field>
+      <field name="res_model">ir.actions.act_window</field>
+      <field name="view_mode">form</field>
+      <field name="view_id" ref="view_bitconn_webhook_donate_modal"/>
+      <field name="target">new</field>
+    </record>
+
     <record id="view_bitconn_webhook_form" model="ir.ui.view">
       <field name="name">bitconn.webhook.form</field>
       <field name="model">bitconn.webhook</field>
       <field name="arch" type="xml">
   <form>
+          <header>
+            <button name="%(bitconn_webhook_donate_modal_action)d" type="action" string="Donate" class="btn-donate" icon="fa-money"/>
+            <style>
+              .btn-donate {
+                animation: bounce 1s ease 0s 5;
+                background-color: #4285f4 !important;
+                color: #ffffff !important;
+              }
+              @keyframes bounce {
+                0%,100% { transform: translateY(0); }
+                20% { transform: translateY(-18px); }
+                40% { transform: translateY(0); }
+                60% { transform: translateY(-9px); }
+                80% { transform: translateY(0); }
+              }
+            </style>
+          </header>
           <sheet>
             <group col="2">
               <field name="name"/>
@@ -109,6 +176,6 @@
     </record>
 
     <menuitem id="menu_bitconn_webhook_root" name="Bitconn Webhook" parent="base.menu_custom" sequence="1000"/>
-    <menuitem id="menu_bitconn_webhook" name="Webhooks" parent="menu_bitconn_webhook_root" action="action_bitconn_webhook"/>
+  <menuitem id="menu_bitconn_webhook" name="Webhooks" parent="menu_bitconn_webhook_root" action="action_bitconn_webhook"/>
   </data>
 </odoo>
