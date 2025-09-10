@@ -147,7 +147,7 @@ curl -X POST -H "Content-Type: application/json" -H "Authorization: Bearer <secr
 - Field-level allow/deny lists per webhook
 
 ## 13. License / Contrib
-Standard Odoo / repository license (see LICENSE). PRs welcome: keep examples minimal & generic.
+License: GPL-3 (see LICENSE file). Contributions welcome—keep examples minimal & generic.
 
 ---
 Single source README: docs sub-README files were merged here for clarity. Refer to directories for raw JSON assets.
