@@ -76,23 +76,102 @@
             <group col="2">
               <field name="name"/>
               <field name="user_id" options="{'no_create': True, 'no_open': True}"/>
-              <field name="can_create"/>
-              <field name="can_write"/>
-              <field name="can_unlink"/>
+              <field name="can_create" invisible="can_code == True"/>
+              <field name="can_write" invisible="can_code == True"/>
+              <field name="can_unlink" invisible="can_code == True"/>
+              <field name="can_code" invisible="can_create == True or can_write == True or can_unlink == True"/>
             </group>
             <notebook>
               <page string="Inbound">
                 <group>
                   <group col="2" class="w-100">
                     <field name="allowed_model_ids" widget="many2many_tags"/>
+                    <field name="inbound_auth_type" widget="radio"/>
                   </group>
                   <group col="2" class="w-100">
                     <field name="webhook_url" readonly="1" widget="CopyClipboardURL"/>
-                    <field name="secret_key" readonly="1" widget="CopyClipboardChar"/>
+                    <field name="secret_key" readonly="1" widget="CopyClipboardChar" invisible="inbound_auth_type == 'none'"/>
                     <!-- <field name="webhook_uuid" readonly="1"/> -->
                   </group>
                 </group>
+                <group invisible="inbound_auth_type == 'none'">
                     <button name="action_regenerate_credentials" string="Regenerate Credentials" type="object" icon="fa-refresh" class="btn-link d-block mx-auto" colspan="2"/>
+                </group>
+                <group invisible="inbound_auth_type != 'none'">
+                  <div class="alert alert-danger" role="alert">
+                    <strong>⚠️ Security Warning:</strong> This webhook is configured for public access without authentication.
+                    Anyone with the webhook URL can send requests. Only use this for trusted sources or public endpoints.
+                  </div>
+                </group>
+              </page>
+
+              <page string="Code" invisible="can_code == False">
+                <group>
+                  <div class="alert alert-warning" role="status">
+                    <strong>Warning:</strong> Custom code execution is a powerful feature. Only enable for trusted sources.
+                    The code will run with the configured user's permissions and full access to all models.
+                  </div>
+                </group>
+                <group>
+                  <separator string="Python Code"/>
+                  <div class="text-muted">
+                    Write your Python code below. Available variables:
+                    <ul>
+                      <li><code>request</code>: Request object with:
+                        <ul>
+                          <li><code>request['body']</code>: Raw request body (string)</li>
+                          <li><code>request['json']</code>: Parsed JSON body (dict)</li>
+                          <li><code>request['headers']</code>: Request headers (dict)</li>
+                          <li><code>request['method']</code>: HTTP method (POST, GET, etc.)</li>
+                        </ul>
+                      </li>
+                      <li><code>env</code>: Odoo environment (with configured user)</li>
+                      <li><code>user_id</code>: Configured user ID</li>
+                      <li><code>json</code>: JSON module for parsing</li>
+                    </ul>
+                    <strong>Important:</strong> Set <code>result</code> variable to return custom response. The result will be shown in the Test Output.
+                  </div>
+                </group>
+                <group>
+                  <field name="python_code" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'lineNumbers': true}" placeholder="# Example:&#10;data = request['json']&#10;partner = env['res.partner'].create({&#10;    'name': data.get('name'),&#10;    'email': data.get('email')&#10;})&#10;result = {'ok': True, 'partner_id': partner.id, 'name': partner.name}"/>
+                </group>
+                
+                <group>
+                  <separator string="Test Code"/>
+                </group>
+                <group col="2">
+                  <group class="w-100" colspan="2">
+                    <field name="pin_request"/>
+                    <div class="text-muted" invisible="pin_request == False">
+                      <i class="fa fa-thumb-tack"/> Using Sample Request (below) as test input.
+                      <br/>
+                      <strong>Note:</strong> Webhook responses will include author/support information when Pin Request is enabled.
+                    </div>
+                  </group>
+                  <group class="w-100" colspan="2" invisible="pin_request == True">
+                    <label for="test_input" string="Test Input (Request Body)"/>
+                    <field name="test_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
+                  </group>
+                  <group class="w-100" colspan="2">
+                    <button name="action_test_code" type="object" string="Test Code" class="btn-primary" icon="fa-play"/>
+                  </group>
+                  <group class="w-100" colspan="2">
+                    <label for="test_output" string="Test Output (Result Variable)"/>
+                    <field name="test_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                  </group>
+                </group>
+                
+                <group>
+                  <separator string="Sample Request (Latest Received)"/>
+                  <div class="text-muted">
+                    This field automatically captures the last request received by this webhook. 
+                    <span invisible="pin_request == False"><strong>Currently pinned for testing.</strong></span>
+                    <span invisible="pin_request == True">Check "Pin Request for Testing" above to use this as test input.</span>
+                  </div>
+                </group>
+                <group>
+                  <field name="sample_request_payload" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                </group>
               </page>
 
               <page string="Outbound">

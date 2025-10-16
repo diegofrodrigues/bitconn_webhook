@@ -14,6 +14,19 @@ class BitconnWebhookController(http.Controller):
         headers = request.httprequest.headers
         return conf._check_header(headers)
 
+    def _save_sample_async(self, webhook_id, raw_body):
+        """Save sample request asynchronously after commit"""
+        try:
+            with request.env.registry.cursor() as new_cr:
+                webhook = request.env['bitconn.webhook'].with_env(
+                    request.env(cr=new_cr)
+                ).sudo().browse(webhook_id)
+                if webhook.exists():
+                    webhook.write({'sample_request_payload': raw_body[:10000]})
+                    new_cr.commit()
+        except Exception:
+            pass  # Silent fail
+
     def _default_payload(self, conf):
         return {
             'secret_key': conf.secret_key,
@@ -37,6 +50,9 @@ class BitconnWebhookController(http.Controller):
             raw_body = request.httprequest.get_data(as_text=True) or ''
         except Exception:
             raw_body = ''
+        
+        # Don't save sample_request_payload here to avoid serialization conflicts
+        # It will be saved asynchronously or manually by user
 
         def _lenient_parse(text):
             """Tenta fazer parsing JSON tolerante (vírgulas finais, aspas simples).
@@ -128,6 +144,86 @@ class BitconnWebhookController(http.Controller):
                 }
             }, status=200)
 
+        # Helper function to save sample request asynchronously
+        def save_sample_async_if_pinned():
+            """Save sample request if pin_request is enabled"""
+            if conf.pin_request and raw_body:
+                import logging
+                _logger = logging.getLogger(__name__)
+                
+                # Capture values BEFORE creating thread to avoid "object unbound" error
+                webhook_id = conf.id
+                webhook_name = conf.name
+                registry = request.env.registry  # Capture registry before thread
+                db_name = request.env.cr.dbname  # Capture database name
+                
+                _logger.info(f"PIN REQUEST DETECTED - Saving sample for webhook {webhook_name} (ID: {webhook_id})")
+                
+                # Build complete request object to save
+                request_obj = {
+                    'body': raw_body,
+                    'headers': dict(request.httprequest.headers),
+                    'method': request.httprequest.method,
+                }
+                try:
+                    request_obj['json'] = json.loads(raw_body)
+                except:
+                    request_obj['json'] = {}
+                
+                # Convert to JSON string
+                sample_data = json.dumps(request_obj, indent=2, ensure_ascii=False)[:10000]
+                
+                _logger.info(f"Sample data prepared, length: {len(sample_data)}")
+                
+                # Schedule async save in a separate thread to avoid serialization conflicts
+                import threading
+                import time
+                def delayed_save():
+                    time.sleep(0.5)  # Wait for main transaction to complete
+                    try:
+                        _logger.info(f"Starting delayed save for webhook ID {webhook_id}")
+                        # Use captured registry instead of request.env.registry
+                        with registry.cursor() as new_cr:
+                            # Create new environment with the new cursor
+                            from odoo.api import Environment
+                            new_env = Environment(new_cr, 1, {})  # uid=1 (admin)
+                            webhook = new_env['bitconn.webhook'].sudo().browse(webhook_id)
+                            if webhook.exists():
+                                webhook.write({'sample_request_payload': sample_data})
+                                new_cr.commit()
+                                _logger.info(f"Sample request saved successfully for webhook {webhook_name}")
+                            else:
+                                _logger.warning(f"Webhook ID {webhook_id} not found")
+                    except Exception as e:
+                        _logger.error(f"Failed to save sample request: {e}", exc_info=True)
+                
+                thread = threading.Thread(target=delayed_save)
+                thread.daemon = True
+                thread.start()
+                _logger.info("Async save thread started")
+            elif conf.pin_request:
+                import logging
+                _logger = logging.getLogger(__name__)
+                # Capture webhook_name before using it
+                webhook_name = conf.name
+                _logger.warning(f"PIN REQUEST enabled but no raw_body for webhook {webhook_name}")
+        
+        # Check if custom code execution is enabled (doesn't require model)
+        # If can_code is enabled and method is 'code', OR if no model provided and can_code is enabled
+        if conf.can_code and (method == 'code' or (not model and conf.pin_request) or (not model and conf.python_code)):
+            res = conf._exec_code(
+                raw_body, 
+                request_headers=dict(request.httprequest.headers),
+                request_method=request.httprequest.method
+            )
+            status = 200 if res.get('ok') else 400
+            
+            # Save sample request if pinned
+            save_sample_async_if_pinned()
+            
+            return request.make_json_response(res, status=status)
+
+        # For other methods, model is required
         if not model:
             return request.make_json_response({'ok': False, 'error': 'invalid_payload', 'reason': 'missing_model'}, status=400)
 
@@ -148,6 +244,10 @@ class BitconnWebhookController(http.Controller):
         if parse_error and res.get('ok'):
             # Anexar aviso de parsing tolerante, sem quebrar sucesso principal
             res['warning'] = parse_error
+        
+        # Save sample request if pinned (for all operations)
+        save_sample_async_if_pinned()
+        
         return request.make_json_response(res, status=status)
 
     @http.route(['/bitconn/webhook/<string:webhook_uuid>/schema'], type='http', auth='public', methods=['GET'], csrf=False)

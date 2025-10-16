@@ -3,6 +3,9 @@ from odoo.exceptions import UserError
 import uuid
 import secrets
 import json
+import logging
+
+_logger = logging.getLogger(__name__)
 
 
 class BitconnWebhook(models.Model):
@@ -15,7 +18,18 @@ class BitconnWebhook(models.Model):
     can_create = fields.Boolean(string='Can Create', default=True, tracking=True)
     can_write = fields.Boolean(string='Can Write', default=True, tracking=True)
     can_unlink = fields.Boolean(string='Can Unlink', default=False, help='Dangerous. Only enable if you really trust the caller.', tracking=True)
+    can_code = fields.Boolean(string='Can Execute Code', default=False, help='Allow execution of custom Python code. Only enable if you really trust the caller.', tracking=True)
     allowed_model_ids = fields.Many2many('ir.model', string='Allowed Models', help='Restrict operations to these models. Leave empty to allow all models.', tracking=True)
+
+    # Inbound Authentication Configuration
+    inbound_auth_type = fields.Selection([
+        ('none', 'None - Public Access'),
+        ('header', 'Header Authentication (Bearer/API Key)')
+    ], string='Inbound Authentication', default='header', required=True, 
+       help='Authentication type for incoming webhooks:\n'
+            '• None: Public access without authentication (use with caution!)\n'
+            '• Header: Requires Bearer token or API key in request headers',
+       tracking=True)
 
     # Sensitive fields: avoid standard tracking to prevent exposing full values; custom masked logging in write()
     secret_key = fields.Char(string='Secret Key', readonly=True, copy=False)
@@ -61,6 +75,44 @@ class BitconnWebhook(models.Model):
     example_write = fields.Text(string='Write Example', compute='_compute_examples_blocks', readonly=True)
     example_unlink = fields.Text(string='Unlink Example', compute='_compute_examples_blocks', readonly=True)
     example_search_advanced = fields.Text(string='Search Advanced Example', compute='_compute_examples_blocks', readonly=True)
+    
+    # Custom Python Code Execution
+    python_code = fields.Text(
+        string='Python Code',
+        help='Custom Python code to execute when webhook is received. Available variables: request (dict with headers, body, method, etc.), env, user_id',
+        default="""# Example: Create a partner from webhook data
+data = request['json']
+partner = env['res.partner'].create({
+    'name': data.get('name', 'New Contact'),
+    'email': data.get('email'),
+    'phone': data.get('phone')
+})
+result = {
+    'ok': True,
+    'partner_id': partner.id,
+    'partner_name': partner.name
+}"""
+    )
+    pin_request = fields.Boolean(
+        string='Pin Request for Testing',
+        default=False,
+        help='When enabled, uses the Sample Request as test input instead of Test Input field.'
+    )
+    test_input = fields.Text(
+        string='Test Input (Request Body)',
+        help='Sample request body to test the Python code. This simulates the raw request payload.',
+        default='{"test": "data"}'
+    )
+    test_output = fields.Text(
+        string='Test Output',
+        readonly=True,
+        help='Output from the last test code execution (value of result variable).'
+    )
+    sample_request_payload = fields.Text(
+        string='Sample Request',
+        readonly=True,
+        help='Latest request payload received by this webhook. Use this to pin/save an example for testing.'
+    )
 
     # -------- Utilities: extract fields with dot-notation --------
     def _extract_fields(self, recs, field_names):
@@ -224,9 +276,34 @@ class BitconnWebhook(models.Model):
         for rec in self:
             rec.webhook_url = f"{base_url}/bitconn/webhook/{rec.webhook_uuid}" if rec.webhook_uuid else False
 
+    @api.onchange('can_code')
+    def _onchange_can_code(self):
+        """When code execution is enabled, disable CRUD operations and vice versa"""
+        if self.can_code:
+            # If code is enabled, disable CRUD operations
+            self.can_create = False
+            self.can_write = False
+            self.can_unlink = False
+
+    @api.onchange('can_create', 'can_write', 'can_unlink')
+    def _onchange_crud_operations(self):
+        """When any CRUD operation is enabled, disable code execution"""
+        if self.can_create or self.can_write or self.can_unlink:
+            # If any CRUD operation is enabled, disable code execution
+            self.can_code = False
+
     # Helpers to validate incoming headers
     def _check_header(self, headers):
+        """Validate authentication based on configured inbound_auth_type.
+        Returns True if authentication is valid or not required.
+        """
         self.ensure_one()
+        
+        # If authentication is disabled (none), always allow access
+        if self.inbound_auth_type == 'none':
+            return True
+        
+        # Header authentication (original behavior)
         # Prefer standard Authorization: Bearer <token>
         auth = headers.get('Authorization') or headers.get('authorization')
         incoming_token = None
@@ -651,6 +728,278 @@ class BitconnWebhook(models.Model):
             return {'ok': ok, 'status': resp.status_code, 'response': resp.text}
         except Exception as e:
             return {'ok': False, 'error': str(e)}
+
+    def action_test_code(self):
+        """Test custom Python code execution with test_input as request body"""
+        self.ensure_one()
+        
+        if not self.can_code:
+            raise UserError(_('Custom code execution is not enabled. Enable "Can Execute Code" first.'))
+        
+        if not self.python_code:
+            raise UserError(_('Please provide Python code to test.'))
+        
+        # Use pinned request or test input
+        if self.pin_request:
+            sample = self.sample_request_payload or ''
+            if not sample:
+                raise UserError(_('No sample request available. Please receive a webhook first or uncheck "Pin Request".'))
+            
+            # Try to parse as complete request object (with body, headers, method)
+            try:
+                sample_obj = json.loads(sample)
+                if isinstance(sample_obj, dict) and 'body' in sample_obj:
+                    # It's a complete request object saved by the controller
+                    request = sample_obj
+                else:
+                    # It's just a payload, wrap it
+                    request = {
+                        'body': sample,
+                        'headers': {},
+                        'method': 'POST',
+                        'json': sample_obj if isinstance(sample_obj, dict) else {}
+                    }
+            except Exception:
+                # Plain text, use as body
+                request = {
+                    'body': sample,
+                    'headers': {},
+                    'method': 'POST',
+                    'json': {}
+                }
+        else:
+            request_body = self.test_input or ''
+            
+            # Prepare request object
+            request = {
+                'body': request_body,
+                'headers': {},
+                'method': 'POST',
+            }
+            
+            # Try to parse body as JSON
+            try:
+                request['json'] = json.loads(request_body)
+            except Exception:
+                request['json'] = {}
+        
+        # Safe execution environment with restricted builtins
+        safe_globals = {
+            '__builtins__': {
+                'True': True,
+                'False': False,
+                'None': None,
+                'str': str,
+                'int': int,
+                'float': float,
+                'bool': bool,
+                'list': list,
+                'dict': dict,
+                'tuple': tuple,
+                'set': set,
+                'len': len,
+                'range': range,
+                'enumerate': enumerate,
+                'zip': zip,
+                'isinstance': isinstance,
+                'hasattr': hasattr,
+                'getattr': getattr,
+                'sum': sum,
+                'min': min,
+                'max': max,
+                'abs': abs,
+                'round': round,
+                'sorted': sorted,
+                'any': any,
+                'all': all,
+            },
+            'request': request,
+            'env': self.env(user=self.user_id.id),
+            'user_id': self.user_id.id,
+            'json': json,
+            '_': _,
+        }
+        
+        try:
+            # Execute code
+            exec(self.python_code, safe_globals)
+            
+            # Get result from executed code
+            if 'result' in safe_globals:
+                result = safe_globals['result']
+                # Format output
+                if isinstance(result, dict):
+                    output = json.dumps(result, indent=2, ensure_ascii=False)
+                elif isinstance(result, (list, tuple)):
+                    output = json.dumps(result, indent=2, ensure_ascii=False)
+                else:
+                    output = str(result)
+            else:
+                output = 'Code executed successfully but no result variable was set.\nSet result = {...} in your code to see output here.'
+            
+            # Write output
+            self.test_output = output
+            
+            # Return True to just refresh the form without changing tabs (like action_test_outbound)
+            return True
+            
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            self.test_output = f"ERROR: {str(e)}\n\n{error_detail}"
+            
+            # Return True to refresh without changing tabs
+            return True
+
+    def action_save_last_request(self):
+        """Manually save the last request from context (for testing purposes)"""
+        self.ensure_one()
+        last_request = self.env.context.get('bitconn_last_request_raw', '')
+        if last_request:
+            self.write({'sample_request_payload': last_request})
+        return True
+
+    def _exec_code(self, request_raw, request_headers=None, request_method='POST'):
+        """Execute custom Python code with request object as input"""
+        self.ensure_one()
+        
+        if not self.can_code:
+            return {'ok': False, 'error': 'permission_denied', 'reason': 'code_execution_not_allowed'}
+        
+        # Prepare request object with full context
+        request_obj = {
+            'body': request_raw,
+            'headers': request_headers or {},
+            'method': request_method,
+        }
+        
+        # Try to parse body as JSON
+        try:
+            request_obj['json'] = json.loads(request_raw) if request_raw else {}
+        except Exception:
+            request_obj['json'] = {}
+        
+        # If pin_request is enabled and no code, just return the request for inspection
+        if self.pin_request and not self.python_code:
+            return {
+                'ok': True,
+                'message': 'Request captured successfully',
+                'data': {
+                    'webhook': self.name,
+                    'mode': 'pin_request',
+                    'status': 'captured'
+                },
+                'request': request_obj,
+                'contribute': {
+                    'author': 'Diego Ferreira Rodrigues',
+                    'email': 'diego@bitconn.com.br',
+                    'website': 'https://bitconn.com.br',
+                    'module': 'Bitconn Webhook',
+                    'message': 'If this module helped you, consider supporting the project! 🍺',
+                    'pix': '00020126810014br.gov.bcb.pix013655f22863-4cea-41e9-904c-df3ce0b241ef0219wa conn odoo module5204000053039865802BR5924Diego Ferreira Rodrigues6009Sao Paulo62290525REC68545B90764819659464106304D86E',
+                    'github': 'https://github.com/diegofrodrigues'
+                }
+            }
+        
+        # If not pinned, code is required
+        if not self.python_code:
+            return {'ok': False, 'error': 'invalid_configuration', 'reason': 'no_python_code_configured'}
+        
+        # Store request temporarily in context to save after transaction completes
+        # This avoids serialization conflicts during webhook processing
+        self = self.with_context(
+            bitconn_last_request_raw=request_raw[:10000] if request_raw else '',
+            bitconn_save_sample=True
+        )
+        
+        # Safe execution environment
+        safe_globals = {
+            '__builtins__': {
+                'True': True,
+                'False': False,
+                'None': None,
+                'str': str,
+                'int': int,
+                'float': float,
+                'bool': bool,
+                'list': list,
+                'dict': dict,
+                'tuple': tuple,
+                'set': set,
+                'len': len,
+                'range': range,
+                'enumerate': enumerate,
+                'zip': zip,
+                'isinstance': isinstance,
+                'hasattr': hasattr,
+                'getattr': getattr,
+                'sum': sum,
+                'min': min,
+                'max': max,
+                'abs': abs,
+                'round': round,
+                'sorted': sorted,
+                'any': any,
+                'all': all,
+            },
+            'request': request_obj,
+            'env': self.env(user=self.user_id.id),
+            'user_id': self.user_id.id,
+            'json': json,
+            '_': _,
+        }
+        
+        result = {'ok': False}
+        
+        try:
+            # Execute code
+            exec(self.python_code, safe_globals)
+            
+            # Check if result was set in executed code
+            if 'result' in safe_globals:
+                result = safe_globals['result']
+                # Validate that result is not the request object itself
+                if result is request_obj:
+                    result = {
+                        'ok': False,
+                        'error': 'invalid_result',
+                        'message': 'Result cannot be the request object. Please set result to your custom response dict.'
+                    }
+                elif not isinstance(result, dict):
+                    result = {'ok': True, 'result': result}
+                else:
+                    # Ensure ok=True if not specified
+                    if 'ok' not in result:
+                        result['ok'] = True
+            else:
+                result = {
+                    'ok': True,
+                    'message': 'Code executed successfully (no result variable set)'
+                }
+            
+            # Always add contribution info if pin_request is enabled
+            if self.pin_request:
+                result['contribute'] = {
+                    'author': 'Diego Ferreira Rodrigues',
+                    'email': 'diego@bitconn.com.br',
+                    'website': 'https://bitconn.com.br',
+                    'module': 'Bitconn Webhook',
+                    'message': 'If this module helped you, consider supporting the project! 🍺',
+                    'pix': '00020126810014br.gov.bcb.pix013655f22863-4cea-41e9-904c-df3ce0b241ef0219wa conn odoo module5204000053039865802BR5924Diego Ferreira Rodrigues6009Sao Paulo62290525REC68545B90764819659464106304D86E',
+                    'github': 'https://github.com/diegofrodrigues'
+                }
+            
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            result = {
+                'ok': False,
+                'error': 'code_execution_failed',
+                'reason': str(e),
+                'traceback': error_detail
+            }
+        
+        return result
 
     # Masked tracking for sensitive fields
     def write(self, vals):
