@@ -14,7 +14,12 @@
             <div class="o_form_label text-muted" invisible="not bitconn_manual_payload">When Manual Payload is enabled, the payload below is sent as-is.</div>
             <field name="bitconn_manual_payload_text" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_manual_payload" placeholder='{"fields":[]}'/>
 
-            <field name="bitconn_field_ids" widget="many2many_tags" invisible="bitconn_manual_payload"/>
+            <field name="bitconn_python_payload"/>
+                <field name="bitconn_preview_record_id" placeholder="ID para preview"/>
+            <div class="o_form_label text-muted" invisible="not bitconn_python_payload">When Python Payload is enabled, the code below is executed for each record. Define <b>result</b> as the payload to send.</div>
+            <field name="bitconn_python_payload_code" nolabel="1" widget="code" options="{'mode':'python','lang': 'python', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_python_payload" placeholder='result = {"id": record.id, "name": record.name}'/>
+
+            <field name="bitconn_field_ids" widget="many2many_tags" invisible="bitconn_manual_payload or bitconn_python_payload"/>
             <separator string="Preview"/>
             <button name="action_generate_bitconn_preview" type="object" string="Regenerate Preview" class="btn-secondary"/>
             <field name="bitconn_preview_payload" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" placeholder='{"model": "res.partner", "records": [{"name": "string"}]}'/>

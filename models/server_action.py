@@ -3,6 +3,18 @@ import json
 
 
 class IrActionsServer(models.Model):
+    bitconn_preview_record_id = fields.Integer(
+        string='ID para Preview',
+        help='ID do registro a ser usado como exemplo no preview do Python Payload. Se vazio, busca o primeiro registro disponível.'
+    )
+    bitconn_python_payload = fields.Boolean(
+        string='Usar Python Payload',
+        help='Se ativo, executa o código Python abaixo para gerar o payload do webhook.'
+    )
+    bitconn_python_payload_code = fields.Text(
+        string='Código Python Payload',
+        help='Bloco de código Python que recebe "record" (ou "records") e deve definir a variável "result" com o payload final.'
+    )
     _inherit = 'ir.actions.server'
 
     state = fields.Selection(
@@ -54,6 +66,70 @@ class IrActionsServer(models.Model):
 
     def _generate_bitconn_preview(self):
         self.ensure_one()
+        # Preview para Python Payload customizado
+        if self.bitconn_python_payload and self.bitconn_python_payload_code:
+            from odoo.tools.safe_eval import safe_eval
+            model_name = self.model_id.model or 'res.partner'
+            # Tenta pegar um registro de exemplo
+            # Se o usuário definiu um ID para preview, tenta buscar esse registro
+            preview_id = getattr(self, 'bitconn_preview_record_id', None)
+            rec = None
+            log_info = {}
+            if preview_id:
+                recs = self.env[model_name].browse(preview_id)
+                rec = recs[0] if recs and recs.exists() else None
+                log_info['preview_id'] = int(preview_id) if preview_id else None
+                log_info['record_exists'] = bool(recs.exists()) if recs else False
+                if not rec:
+                    recs = self.env[model_name].search([], limit=1)
+                    rec = recs[0] if recs else None
+                    log_info['fallback_first_id'] = int(rec.id) if rec else None
+            else:
+                recs = self.env[model_name].search([], limit=1)
+                rec = recs[0] if recs else None
+                log_info['fallback_first_id'] = int(rec.id) if rec else None
+            # Se não houver registro, cria um mock sintético
+            if not rec:
+                # Remove objetos Odoo do log_info
+                for k, v in list(log_info.items()):
+                    if hasattr(v, 'ids'):
+                        log_info[k] = list(v.ids)
+                    elif hasattr(v, 'id'):
+                        log_info[k] = int(v.id)
+                return json.dumps({
+                    'error': 'Nenhum registro encontrado para preview.',
+                    'debug': log_info
+                }, indent=2, ensure_ascii=False)
+            else:
+                local_ctx = {
+                    'record': rec,
+                    'records': recs if recs else [rec],
+                    'env': self.env,
+                    'getattr': getattr,
+                    'dir': dir,
+                    'repr': repr,
+                }
+                try:
+                    exec(self.bitconn_python_payload_code, {}, local_ctx)
+                    result = local_ctx.get('result')
+                    if result is None:
+                        # Remove objetos Odoo do log_info
+                        for k, v in list(log_info.items()):
+                            if hasattr(v, 'ids'):
+                                log_info[k] = list(v.ids)
+                            elif hasattr(v, 'id'):
+                                log_info[k] = int(v.id)
+                        return json.dumps({'error': 'O código Python não definiu a variável result ou retornou None.', 'debug': log_info}, indent=2, ensure_ascii=False)
+                    return json.dumps(result, indent=2, ensure_ascii=False)
+                except Exception as e:
+                    # Remove objetos Odoo do log_info
+                    for k, v in list(log_info.items()):
+                        if hasattr(v, 'ids'):
+                            log_info[k] = list(v.ids)
+                        elif hasattr(v, 'id'):
+                            log_info[k] = int(v.id)
+                    return json.dumps({'error': f'Erro ao executar Python Payload: {e}', 'debug': log_info}, indent=2, ensure_ascii=False)
+
         # If manual payload enabled and present, show it
         if self.bitconn_manual_payload and self.bitconn_manual_payload_text:
             try:
@@ -116,7 +192,65 @@ class IrActionsServer(models.Model):
         ctx = self._context or {}
         active_ids = ctx.get('active_ids') or []
         recs = self.env[model_name].browse(active_ids).exists()
-        # If manual payload: send body as-is
+        # Se usar Python Payload customizado
+        if self.bitconn_python_payload and self.bitconn_python_payload_code:
+            code = self.bitconn_python_payload_code
+            # Sempre processa como singleton igual ao preview
+            if recs:
+                rec = recs[0]
+                local_ctx = {
+                    'record': rec,
+                    'records': recs,
+                    'env': self.env,
+                    'getattr': getattr,
+                    'dir': dir,
+                    'repr': repr,
+                }
+                exec(code, {}, local_ctx)
+                body = local_ctx.get('result')
+                if body is None:
+                    body = {'error': 'O código Python não definiu a variável result ou retornou None.'}
+            else:
+                body = {'error': 'Nenhum registro selecionado para execução.'}
+            # direct send using webhook config
+            try:
+                import requests, json as _json
+                headers = {'Content-Type': 'application/json'}
+                # merge configured headers
+                if self.bitconn_webhook_id.outbound_headers:
+                    try:
+                        hdrs = json.loads(self.bitconn_webhook_id.outbound_headers)
+                        if isinstance(hdrs, dict):
+                            headers.update({str(k): str(v) for k, v in hdrs.items()})
+                    except Exception:
+                        pass
+                url = self.bitconn_webhook_id.outbound_url
+                data = _json.dumps(body, ensure_ascii=False)
+                resp = requests.post(url, data=data, headers=headers, timeout=15)
+                # Format result: Status + pretty body when JSON
+                formatted = resp.text or ''
+                try:
+                    ctype = (resp.headers.get('Content-Type') or '').lower()
+                except Exception:
+                    ctype = ''
+                if 'application/json' in ctype or (formatted.strip().startswith('{') or formatted.strip().startswith('[')):
+                    try:
+                        parsed = resp.json()
+                    except Exception:
+                        try:
+                            parsed = json.loads(formatted)
+                        except Exception:
+                            parsed = None
+                    if parsed is not None:
+                        try:
+                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
+                        except Exception:
+                            pass
+                self.sudo().write({'bitconn_last_result': f"Status: {resp.status_code}\nBody:\n{formatted}"})
+            except Exception as e:
+                self.sudo().write({'bitconn_last_result': f"Error: {e}"})
+            return False
+        # If manual payload: send body as-is (mantém lógica anterior)
         if self.bitconn_manual_payload and self.bitconn_manual_payload_text:
             body = {}
             try:
