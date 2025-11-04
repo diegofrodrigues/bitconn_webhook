@@ -215,7 +215,12 @@ class IrActionsServer(models.Model):
             # direct send using webhook config
             try:
                 import requests, json as _json
-                headers = {'Content-Type': 'application/json'}
+                import logging
+                _logger = logging.getLogger(__name__)
+                
+                headers = {
+                    'Content-Type': 'application/json',
+                }
                 # merge configured headers
                 if self.bitconn_webhook_id.outbound_headers:
                     try:
@@ -224,9 +229,32 @@ class IrActionsServer(models.Model):
                             headers.update({str(k): str(v) for k, v in hdrs.items()})
                     except Exception:
                         pass
+                
+                # Process URL template if it contains variables
                 url = self.bitconn_webhook_id.outbound_url
+                _logger.info(f"[Python Payload] URL original: {url}")
+                _logger.info(f"[Python Payload] Tem registros: {bool(recs)}, Quantidade: {len(recs) if recs else 0}")
+                _logger.info(f"[Python Payload] URL contém '{{{{': {'{{' in url}")
+                
+                if recs and len(recs) == 1 and '{{' in url:
+                    _logger.info(f"[Python Payload] Processando URL template com record ID {recs[0].id}")
+                    url = self.bitconn_webhook_id._process_url_template(url, recs[0])
+                    _logger.info(f"[Python Payload] URL processada: {url}")
+                else:
+                    _logger.info(f"[Python Payload] URL NÃO será processada - usando original")
+                
                 data = _json.dumps(body, ensure_ascii=False)
+                _logger.info(f"[Python Payload] Enviando POST para: {url}")
+                _logger.info(f"[Python Payload] Headers: {headers}")
+                _logger.info(f"[Python Payload] Body (raw): {repr(data[:500])}")
+                _logger.info(f"[Python Payload] Body length: {len(data)}")
+                
                 resp = requests.post(url, data=data, headers=headers, timeout=15)
+                
+                _logger.info(f"[Python Payload] Response Status: {resp.status_code}")
+                _logger.info(f"[Python Payload] Response Headers: {dict(resp.headers)}")
+                _logger.info(f"[Python Payload] Response Body: {resp.text[:500]}")
+                
                 # Format result: Status + pretty body when JSON
                 formatted = resp.text or ''
                 try:
@@ -246,7 +274,7 @@ class IrActionsServer(models.Model):
                             formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
                         except Exception:
                             pass
-                self.sudo().write({'bitconn_last_result': f"Status: {resp.status_code}\nBody:\n{formatted}"})
+                self.sudo().write({'bitconn_last_result': f"URL: {url}\n\nRequest Body:\n{data}\n\nStatus: {resp.status_code}\n\nResponse:\n{formatted}"})
             except Exception as e:
                 self.sudo().write({'bitconn_last_result': f"Error: {e}"})
             return False
@@ -341,7 +369,7 @@ class IrActionsServer(models.Model):
             except Exception:
                 # On any resolution error, keep original body
                 pass
-            # direct send using webhook config
+                        # direct send using webhook config
             try:
                 import requests, json as _json
                 headers = {'Content-Type': 'application/json'}
@@ -353,7 +381,12 @@ class IrActionsServer(models.Model):
                             headers.update({str(k): str(v) for k, v in hdrs.items()})
                     except Exception:
                         pass
+                
+                # Process URL template if it contains variables
                 url = self.bitconn_webhook_id.outbound_url
+                if recs and len(recs) == 1 and '{{' in url:
+                    url = self.bitconn_webhook_id._process_url_template(url, recs[0])
+                
                 data = _json.dumps(body, ensure_ascii=False)
                 resp = requests.post(url, data=data, headers=headers, timeout=15)
                 # Format result: Status + pretty body when JSON
@@ -379,6 +412,7 @@ class IrActionsServer(models.Model):
             except Exception as e:
                 self.sudo().write({'bitconn_last_result': f"Error: {e}"})
             return False
+        # Otherwise: build fields list and use helper
 
         # Otherwise: build fields list and use helper
         base_fields = self.bitconn_field_ids.mapped('name') if self.bitconn_field_ids else []
@@ -390,6 +424,8 @@ class IrActionsServer(models.Model):
                 self.sudo().write({'bitconn_last_result': f"Error: {result.get('error')}"})
             else:
                 status = result.get('status') if isinstance(result, dict) else None
+                url = result.get('url', 'N/A')
+                req_body = result.get('request_body', '')
                 text = result.get('response') if isinstance(result, dict) else ''
                 formatted = text or ''
                 if formatted:
@@ -399,7 +435,26 @@ class IrActionsServer(models.Model):
                             formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
                     except Exception:
                         pass
-                self.sudo().write({'bitconn_last_result': f"Status: {status}\nBody:\n{formatted}"})
+                
+                # Pretty print request body if JSON
+                formatted_req = req_body
+                if req_body:
+                    try:
+                        if req_body.strip().startswith('{') or req_body.strip().startswith('['):
+                            parsed_req = json.loads(req_body)
+                            formatted_req = json.dumps(parsed_req, indent=2, ensure_ascii=False)
+                    except Exception:
+                        pass
+                
+                # Se resposta vazia, adicionar mensagem explicativa
+                if not formatted or not formatted.strip():
+                    if status == 400:
+                        formatted = "(Empty response - Bad Request)\nPossible causes:\n- Invalid URL format\n- Missing/incorrect authentication\n- Invalid payload format"
+                    else:
+                        formatted = "(Empty response)"
+                
+                result_text = f"URL: {url}\n\nRequest Body:\n{formatted_req}\n\nStatus: {status}\n\nResponse:\n{formatted}"
+                self.sudo().write({'bitconn_last_result': result_text})
         except Exception:
             # best-effort only
             pass

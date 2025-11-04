@@ -38,7 +38,18 @@ class BitconnWebhook(models.Model):
     webhook_url = fields.Char(string='Webhook URL', compute='_compute_webhook_url', compute_sudo=True)
     # Minimal outbound config (simple direct POST)
     outbound_enabled = fields.Boolean(string='Enable Outbound', default=False, tracking=True)
-    outbound_url = fields.Char(string='Outbound URL', help='Destination URL to POST outbound payloads', tracking=True)
+    outbound_url = fields.Char(
+        string='Outbound URL', 
+        help='Destination URL to POST outbound payloads.\n\n'
+             'Supports dynamic variables from record fields:\n'
+             '• {{field_name}} - Simple fields (e.g., {{name}}, {{id}}, {{email}})\n'
+             '• {{relation.field}} - Related fields (e.g., {{partner_id.name}}, {{user_id.email}})\n\n'
+             'Examples:\n'
+             '• https://api.example.com/orders/{{name}}\n'
+             '• https://api.example.com/partners/{{partner_id.id}}/notify\n'
+             '• https://webhook.site/{{id}}?ref={{name}}',
+        tracking=True
+    )
     outbound_headers = fields.Text(
         string='Outbound Headers (JSON)',
         help='Optional headers as JSON object, e.g. {"Authorization": "Bearer ..."}',
@@ -46,12 +57,15 @@ class BitconnWebhook(models.Model):
     )
     outbound_test_body = fields.Text(
         string='Outbound Test Body (JSON)',
-        help='Custom JSON body to send in a test call to the Outbound URL.',
+        help='Custom JSON body to send in a test call to the Outbound URL.\n\n'
+             'If your URL contains variables like {{name}}, the test will try to extract\n'
+             'values from the first record in this test data.',
         default=json.dumps({
             "model": "res.partner",
             "count": 1,
             "records": [
                 {
+                    "id": 123,
                     "name": "Test Partner",
                     "email": "john.doe@example.com",
                     "phone": "+5511999999999"
@@ -193,7 +207,53 @@ result = {
                 raise UserError(_('Enable Outbound first.'))
             if not rec.outbound_url:
                 raise UserError(_('Please set the Outbound URL.'))
+            
             body = rec.outbound_test_body or ''
+            
+            # Try to extract model and record info from test body for URL template processing
+            final_url = rec.outbound_url
+            try:
+                test_data = json.loads(body)
+                model = test_data.get('model')
+                
+                # If URL has variables and we have a model in test data, try to use first record from test
+                if '{{' in rec.outbound_url and model:
+                    # Check if there are records in test data
+                    records = test_data.get('records', [])
+                    if records and isinstance(records, list) and len(records) > 0:
+                        first_record = records[0]
+                        # Create a temporary mock record-like object
+                        class MockRecord:
+                            def __init__(self, data):
+                                self._data = data
+                            def __getitem__(self, key):
+                                return self._data.get(key, '')
+                        
+                        mock_rec = MockRecord(first_record)
+                        # Try to process URL (will fail gracefully for complex paths)
+                        try:
+                            import re
+                            pattern = r'\{\{([^}]+)\}\}'
+                            matches = re.findall(pattern, rec.outbound_url)
+                            processed_url = rec.outbound_url
+                            for match in matches:
+                                field_path = match.strip()
+                                placeholder = f'{{{{{field_path}}}}}'
+                                # Only support simple fields in test mode
+                                if '.' not in field_path:
+                                    value = first_record.get(field_path, '')
+                                    from urllib.parse import quote
+                                    value_encoded = quote(str(value), safe='')
+                                    processed_url = processed_url.replace(placeholder, value_encoded)
+                                else:
+                                    # For nested fields in test, just use empty
+                                    processed_url = processed_url.replace(placeholder, 'test')
+                            final_url = processed_url
+                        except Exception as e:
+                            _logger.warning(f"Could not process URL template in test: {e}")
+            except Exception:
+                pass
+            
             # Prepare headers
             headers = {'Content-Type': 'application/json'}
             try:
@@ -206,7 +266,7 @@ result = {
             # Send request
             try:
                 import requests
-                resp = requests.post(rec.outbound_url, data=body, headers=headers, timeout=15)
+                resp = requests.post(final_url, data=body, headers=headers, timeout=15)
                 # Pretty print JSON when possible
                 formatted = resp.text or ''
                 try:
@@ -226,9 +286,9 @@ result = {
                             formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
                         except Exception:
                             pass
-                rec.outbound_test_result = f"Status: {resp.status_code}\nBody:\n{formatted}"
+                rec.outbound_test_result = f"URL: {final_url}\nStatus: {resp.status_code}\nBody:\n{formatted}"
             except Exception as e:
-                rec.outbound_test_result = f"Error: {e}"
+                rec.outbound_test_result = f"URL: {final_url}\nError: {e}"
                 raise UserError(_('Outbound test failed: %s') % str(e))
         return True
 
@@ -673,6 +733,90 @@ result = {
             }
 
     # Outbound: direct send helper using same read/search logic to build payload
+    def _process_url_template(self, url_template, record):
+        """Process URL template replacing {{field_name}} with actual record values.
+        Supports:
+        - Simple fields: {{name}}, {{id}}, {{email}}
+        - Related fields: {{partner_id.name}}, {{user_id.email}}
+        - Dot notation for nested relations: {{order_id.partner_id.name}}
+        
+        Args:
+            url_template: URL string with {{variable}} placeholders
+            record: Single record (recordset with len=1) to extract values from
+        
+        Returns:
+            Processed URL string with variables replaced
+        """
+        if not url_template or not record:
+            return url_template
+        
+        import re
+        
+        _logger.info(f"[_process_url_template] URL template: {url_template}")
+        _logger.info(f"[_process_url_template] Record: {record} (model: {record._name if record else 'None'})")
+        
+        # Find all {{variable}} patterns
+        pattern = r'\{\{([^}]+)\}\}'
+        matches = re.findall(pattern, url_template)
+        
+        _logger.info(f"[_process_url_template] Found {len(matches)} variables: {matches}")
+        
+        if not matches:
+            return url_template
+        
+        processed_url = url_template
+        
+        for match in matches:
+            field_path = match.strip()
+            placeholder = f'{{{{{field_path}}}}}'
+            
+            _logger.info(f"[_process_url_template] Processing variable: {field_path}")
+            
+            try:
+                # Split by dots for nested fields
+                parts = field_path.split('.')
+                value = record
+                
+                # Navigate through the field path
+                for part in parts:
+                    if not value:
+                        break
+                    _logger.info(f"[_process_url_template]   Accessing field: {part} on {value}")
+                    value = value[part]
+                    _logger.info(f"[_process_url_template]   Got value: {value} (type: {type(value).__name__})")
+                
+                # Convert value to string
+                if isinstance(value, models.BaseModel):
+                    # If it's a record, use its id or display_name
+                    if len(value) == 1:
+                        value = str(value.id)
+                    elif len(value) > 1:
+                        # Multiple records, use comma-separated ids
+                        value = ','.join(str(v.id) for v in value)
+                    else:
+                        value = ''
+                elif value is False or value is None:
+                    value = ''
+                else:
+                    value = str(value)
+                
+                _logger.info(f"[_process_url_template]   Final value: '{value}'")
+                
+                # Replace placeholder with actual value
+                # URL encode the value to handle special characters
+                from urllib.parse import quote
+                value_encoded = quote(str(value), safe='')
+                _logger.info(f"[_process_url_template]   URL encoded: '{value_encoded}'")
+                processed_url = processed_url.replace(placeholder, value_encoded)
+                
+            except Exception as e:
+                # If field doesn't exist or error, leave placeholder or use empty
+                _logger.warning(f"[_process_url_template] Failed to process variable '{field_path}': {e}")
+                processed_url = processed_url.replace(placeholder, '')
+        
+        _logger.info(f"[_process_url_template] Final URL: {processed_url}")
+        return processed_url
+
     def send_outbound(self, model_name, ids=None, domain=None, fields=None, extra=None):
         """Send an outbound POST to outbound_url with a payload built from model/ids/domain.
         - Reads with the configured user (self.user_id) respecting ACLs/rules.
@@ -696,6 +840,23 @@ result = {
         with self.env.cr.savepoint():
             recs = Model.browse(ids) if ids else Model.search(domain or [])
             recs = recs.exists()
+            
+            # Process URL template if we have a single record
+            # For multiple records, use the original URL
+            final_url = self.outbound_url
+            _logger.info(f"[Webhook.send_outbound] Original URL: {self.outbound_url}")
+            _logger.info(f"[Webhook.send_outbound] Number of records: {len(recs)}")
+            
+            if len(recs) == 1:
+                _logger.info(f"[Webhook.send_outbound] Processing URL template for single record: {recs}")
+                final_url = self._process_url_template(self.outbound_url, recs)
+                _logger.info(f"[Webhook.send_outbound] Processed URL: {final_url}")
+            elif len(recs) > 1 and '{{' in self.outbound_url:
+                _logger.warning(
+                    f"Outbound URL contains variables but {len(recs)} records were provided. "
+                    f"Variables are only replaced for single records. Using original URL."
+                )
+            
             payload = {
                 'model': model_name,
                 'count': len(recs),
@@ -721,13 +882,31 @@ result = {
         # send
         import json as _json
         body = _json.dumps(payload, separators=(',', ':'))
+        
+        _logger.info(f"[Webhook.send_outbound] Sending request:")
+        _logger.info(f"[Webhook.send_outbound]   URL: {final_url}")
+        _logger.info(f"[Webhook.send_outbound]   Headers: {headers}")
+        _logger.info(f"[Webhook.send_outbound]   Body: {body[:500]}...")  # First 500 chars
+        
         try:
             import requests
-            resp = requests.post(self.outbound_url, data=body, headers=headers, timeout=15)
+            resp = requests.post(final_url, data=body, headers=headers, timeout=15)
             ok = 200 <= resp.status_code < 300
-            return {'ok': ok, 'status': resp.status_code, 'response': resp.text}
+            
+            _logger.info(f"[Webhook.send_outbound] Response:")
+            _logger.info(f"[Webhook.send_outbound]   Status: {resp.status_code}")
+            _logger.info(f"[Webhook.send_outbound]   Response: {resp.text[:500]}")
+            
+            return {
+                'ok': ok, 
+                'status': resp.status_code, 
+                'response': resp.text, 
+                'url': final_url,
+                'request_body': body,
+                'request_headers': str(headers)
+            }
         except Exception as e:
-            return {'ok': False, 'error': str(e)}
+            return {'ok': False, 'error': str(e), 'url': final_url}
 
     def action_test_code(self):
         """Test custom Python code execution with test_input as request body"""
