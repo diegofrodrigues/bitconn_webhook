@@ -249,7 +249,10 @@ class IrActionsServer(models.Model):
                 _logger.info(f"[Python Payload] Body (raw): {repr(data[:500])}")
                 _logger.info(f"[Python Payload] Body length: {len(data)}")
                 
-                resp = requests.post(url, data=data, headers=headers, timeout=15)
+                # Encode data as UTF-8 bytes to handle accents correctly
+                data_bytes = data.encode('utf-8')
+                
+                resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
                 
                 _logger.info(f"[Python Payload] Response Status: {resp.status_code}")
                 _logger.info(f"[Python Payload] Response Headers: {dict(resp.headers)}")
@@ -388,7 +391,9 @@ class IrActionsServer(models.Model):
                     url = self.bitconn_webhook_id._process_url_template(url, recs[0])
                 
                 data = _json.dumps(body, ensure_ascii=False)
-                resp = requests.post(url, data=data, headers=headers, timeout=15)
+                # Encode data as UTF-8 bytes to handle accents correctly
+                data_bytes = data.encode('utf-8')
+                resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
                 # Format result: Status + pretty body when JSON
                 formatted = resp.text or ''
                 try:

@@ -266,7 +266,9 @@ result = {
             # Send request
             try:
                 import requests
-                resp = requests.post(final_url, data=body, headers=headers, timeout=15)
+                # Encode data as UTF-8 bytes to handle accents correctly
+                body_bytes = body.encode('utf-8')
+                resp = requests.post(final_url, data=body_bytes, headers=headers, timeout=15)
                 # Pretty print JSON when possible
                 formatted = resp.text or ''
                 try:
@@ -881,7 +883,7 @@ result = {
 
         # send
         import json as _json
-        body = _json.dumps(payload, separators=(',', ':'))
+        body = _json.dumps(payload, separators=(',', ':'), ensure_ascii=False)
         
         _logger.info(f"[Webhook.send_outbound] Sending request:")
         _logger.info(f"[Webhook.send_outbound]   URL: {final_url}")
@@ -890,7 +892,9 @@ result = {
         
         try:
             import requests
-            resp = requests.post(final_url, data=body, headers=headers, timeout=15)
+            # Encode data as UTF-8 bytes to handle accents correctly
+            body_bytes = body.encode('utf-8')
+            resp = requests.post(final_url, data=body_bytes, headers=headers, timeout=15)
             ok = 200 <= resp.status_code < 300
             
             _logger.info(f"[Webhook.send_outbound] Response:")
