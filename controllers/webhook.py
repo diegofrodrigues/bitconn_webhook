@@ -37,7 +37,7 @@ class BitconnWebhookController(http.Controller):
             'values': {'name': 'Webhook Partner'},
         }
 
-    @http.route('/bitconn/webhook/<string:uuid_str>', type='http', auth='public', methods=['POST'], csrf=False)
+    @http.route('/bitconn/webhook/<string:uuid_str>', type='http', auth='public', methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE'], csrf=False)
     def receive(self, uuid_str, **kwargs):
         conf = self._resolve_conf(uuid_str)
         if not conf:
@@ -45,6 +45,30 @@ class BitconnWebhookController(http.Controller):
         if not self._validate(conf):
             return request.make_json_response({'ok': False, 'error': 'forbidden', 'reason': 'invalid_token'}, status=401)
 
+        # Get HTTP method
+        http_method = request.httprequest.method
+        
+        # Check if method is allowed for this webhook
+        if not conf._is_method_allowed(http_method):
+            allowed = []
+            if conf.inbound_allowed_methods == 'POST':
+                allowed = ['POST']
+            elif conf.inbound_allowed_methods == 'ALL':
+                allowed = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
+            elif conf.inbound_allowed_methods == 'CUSTOM':
+                if conf.inbound_methods_get: allowed.append('GET')
+                if conf.inbound_methods_post: allowed.append('POST')
+                if conf.inbound_methods_put: allowed.append('PUT')
+                if conf.inbound_methods_patch: allowed.append('PATCH')
+                if conf.inbound_methods_delete: allowed.append('DELETE')
+            
+            return request.make_json_response({
+                'ok': False, 
+                'error': 'method_not_allowed',
+                'message': f'Method {http_method} not allowed for this webhook',
+                'allowed_methods': allowed
+            }, status=405)
+        
         raw_body = ''
         try:
             raw_body = request.httprequest.get_data(as_text=True) or ''

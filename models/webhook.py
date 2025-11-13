@@ -38,9 +38,17 @@ class BitconnWebhook(models.Model):
     webhook_url = fields.Char(string='Webhook URL', compute='_compute_webhook_url', compute_sudo=True)
     # Minimal outbound config (simple direct POST)
     outbound_enabled = fields.Boolean(string='Enable Outbound', default=False, tracking=True)
+    outbound_method = fields.Selection([
+        ('GET', 'GET'),
+        ('POST', 'POST'),
+        ('PUT', 'PUT'),
+        ('PATCH', 'PATCH'),
+        ('DELETE', 'DELETE'),
+    ], string='HTTP Method', default='POST', required=True, tracking=True,
+       help='HTTP method to use for outbound requests')
     outbound_url = fields.Char(
         string='Outbound URL', 
-        help='Destination URL to POST outbound payloads.\n\n'
+        help='Destination URL for outbound requests.\n\n'
              'Supports dynamic variables from record fields:\n'
              '• {{field_name}} - Simple fields (e.g., {{name}}, {{id}}, {{email}})\n'
              '• {{relation.field}} - Related fields (e.g., {{partner_id.name}}, {{user_id.email}})\n\n'
@@ -91,21 +99,57 @@ class BitconnWebhook(models.Model):
     example_search_advanced = fields.Text(string='Search Advanced Example', compute='_compute_examples_blocks', readonly=True)
     
     # Custom Python Code Execution
+    inbound_allowed_methods = fields.Selection([
+        ('POST', 'POST only'),
+        ('ALL', 'All methods (GET, POST, PUT, PATCH, DELETE)'),
+        ('CUSTOM', 'Custom selection')
+    ], string='Allowed HTTP Methods', default='POST', 
+       help='Which HTTP methods are allowed for this webhook', tracking=True)
+    
+    inbound_methods_get = fields.Boolean(string='GET', default=False)
+    inbound_methods_post = fields.Boolean(string='POST', default=True)
+    inbound_methods_put = fields.Boolean(string='PUT', default=False)
+    inbound_methods_patch = fields.Boolean(string='PATCH', default=False)
+    inbound_methods_delete = fields.Boolean(string='DELETE', default=False)
+    
     python_code = fields.Text(
         string='Python Code',
-        help='Custom Python code to execute when webhook is received. Available variables: request (dict with headers, body, method, etc.), env, user_id',
-        default="""# Example: Create a partner from webhook data
-data = request['json']
-partner = env['res.partner'].create({
-    'name': data.get('name', 'New Contact'),
-    'email': data.get('email'),
-    'phone': data.get('phone')
-})
-result = {
-    'ok': True,
-    'partner_id': partner.id,
-    'partner_name': partner.name
-}"""
+        help='Custom Python code to execute when webhook is received. See Help tab for complete documentation.',
+        default="""# ==========================================
+# request - Request object
+# ==========================================
+# request['body'] - Raw request body as string. Use for signature validation, XML parsing, 
+#                   or when you need the original text.
+# request['json'] - Parsed JSON body as Python dict. Most convenient for accessing request data.
+# request['headers'] - Request headers as dict. Access with request['headers'].get('Content-Type')
+# request['method'] - HTTP method (GET, POST, PUT, PATCH, DELETE). Use to route different logic 
+#                     based on method.
+#
+# Available variables: request, env, user_id, json
+# Set result variable to return response
+# See Help tab for complete documentation
+#
+# ==========================================
+# Example: Create a partner from webhook data
+# ==========================================
+# data = request['json']
+# partner = env['res.partner'].create({
+#     'name': data.get('name', 'New Contact'),
+#     'email': data.get('email'),
+#     'phone': data.get('phone')
+# })
+# result = {
+#     'ok': True,
+#     'partner_id': partner.id,
+#     'partner_name': partner.name
+# }
+
+result = {'ok': True, 'message': 'Code executed successfully'}"""
+    )
+    enable_test = fields.Boolean(
+        string='Enable Test',
+        default=False,
+        help='Enable test mode to test your Python code with sample data'
     )
     pin_request = fields.Boolean(
         string='Pin Request for Testing',
@@ -126,6 +170,23 @@ result = {
         string='Sample Request',
         readonly=True,
         help='Latest request payload received by this webhook. Use this to pin/save an example for testing.'
+    )
+    
+    # Real-time request monitoring
+    last_request_input = fields.Text(
+        string='Last Request Input',
+        readonly=True,
+        help='Raw input from the last webhook request received (before processing)'
+    )
+    last_request_date = fields.Datetime(
+        string='Last Request Date',
+        readonly=True,
+        help='Timestamp of the last request'
+    )
+    last_request_output = fields.Text(
+        string='Last Request Output',
+        readonly=True,
+        help='Output from the last request processing'
     )
 
     # -------- Utilities: extract fields with dot-notation --------
@@ -268,7 +329,20 @@ result = {
                 import requests
                 # Encode data as UTF-8 bytes to handle accents correctly
                 body_bytes = body.encode('utf-8')
-                resp = requests.post(final_url, data=body_bytes, headers=headers, timeout=15)
+                
+                # Use the configured HTTP method
+                method = (rec.outbound_method or 'POST').upper()
+                if method == 'GET':
+                    resp = requests.get(final_url, headers=headers, timeout=15)
+                elif method == 'PUT':
+                    resp = requests.put(final_url, data=body_bytes, headers=headers, timeout=15)
+                elif method == 'PATCH':
+                    resp = requests.patch(final_url, data=body_bytes, headers=headers, timeout=15)
+                elif method == 'DELETE':
+                    resp = requests.delete(final_url, headers=headers, timeout=15)
+                else:  # POST (default)
+                    resp = requests.post(final_url, data=body_bytes, headers=headers, timeout=15)
+                
                 # Pretty print JSON when possible
                 formatted = resp.text or ''
                 try:
@@ -292,6 +366,12 @@ result = {
             except Exception as e:
                 rec.outbound_test_result = f"URL: {final_url}\nError: {e}"
                 raise UserError(_('Outbound test failed: %s') % str(e))
+        return True
+
+    def action_clear_outbound_test_result(self):
+        """Clear the outbound test result field"""
+        self.ensure_one()
+        self.write({'outbound_test_result': False})
         return True
 
     @api.model_create_multi
@@ -392,6 +472,26 @@ result = {
             return True
         imodel = self.env['ir.model']
         return bool(self.allowed_model_ids.filtered(lambda m: m.model == model_name))
+    
+    def _is_method_allowed(self, method):
+        """Check if HTTP method is allowed for this webhook"""
+        self.ensure_one()
+        method = (method or 'POST').upper()
+        
+        if self.inbound_allowed_methods == 'POST':
+            return method == 'POST'
+        elif self.inbound_allowed_methods == 'ALL':
+            return method in ('GET', 'POST', 'PUT', 'PATCH', 'DELETE')
+        elif self.inbound_allowed_methods == 'CUSTOM':
+            method_fields = {
+                'GET': self.inbound_methods_get,
+                'POST': self.inbound_methods_post,
+                'PUT': self.inbound_methods_put,
+                'PATCH': self.inbound_methods_patch,
+                'DELETE': self.inbound_methods_delete,
+            }
+            return method_fields.get(method, False)
+        return False
 
     # ORM execution helpers
     def _exec_create(self, model_name, values):
@@ -894,7 +994,20 @@ result = {
             import requests
             # Encode data as UTF-8 bytes to handle accents correctly
             body_bytes = body.encode('utf-8')
-            resp = requests.post(final_url, data=body_bytes, headers=headers, timeout=15)
+            
+            # Use the configured HTTP method
+            method = (self.outbound_method or 'POST').upper()
+            if method == 'GET':
+                resp = requests.get(final_url, headers=headers, timeout=15)
+            elif method == 'PUT':
+                resp = requests.put(final_url, data=body_bytes, headers=headers, timeout=15)
+            elif method == 'PATCH':
+                resp = requests.patch(final_url, data=body_bytes, headers=headers, timeout=15)
+            elif method == 'DELETE':
+                resp = requests.delete(final_url, headers=headers, timeout=15)
+            else:  # POST (default)
+                resp = requests.post(final_url, data=body_bytes, headers=headers, timeout=15)
+            
             ok = 200 <= resp.status_code < 300
             
             _logger.info(f"[Webhook.send_outbound] Response:")
@@ -1041,6 +1154,79 @@ result = {
         if last_request:
             self.write({'sample_request_payload': last_request})
         return True
+    
+    def _save_request_monitor_async(self, request_raw, request_headers, request_method, result):
+        """Save request monitoring data asynchronously to avoid serialization conflicts"""
+        webhook_id = self.id
+        registry = self.env.registry
+        
+        import threading
+        import time
+        
+        def delayed_save():
+            time.sleep(0.3)  # Short delay to let main transaction complete
+            try:
+                with registry.cursor() as new_cr:
+                    from odoo.api import Environment
+                    new_env = Environment(new_cr, 1, {})
+                    webhook = new_env['bitconn.webhook'].sudo().browse(webhook_id)
+                    if webhook.exists():
+                        # Format request data
+                        request_data = {
+                            'body': request_raw[:5000] if request_raw else '',
+                            'headers': dict(request_headers or {}),
+                            'method': request_method,
+                        }
+                        
+                        update_vals = {
+                            'last_request_input': json.dumps(request_data, indent=2, ensure_ascii=False)[:10000],
+                            'last_request_date': fields.Datetime.now(),
+                            'last_request_output': json.dumps(result, indent=2, ensure_ascii=False)[:10000] if result else False,
+                        }
+                        webhook.write(update_vals)
+                        new_cr.commit()
+            except Exception as e:
+                _logger.warning(f"Failed to save request monitor data async: {e}")
+        
+        thread = threading.Thread(target=delayed_save)
+        thread.daemon = True
+        thread.start()
+    
+    def action_refresh_monitor(self):
+        """Refresh/reload the monitor fields in the UI"""
+        self.ensure_one()
+        return True
+    
+    def action_clear_request_input(self):
+        """Clear the last request input and date fields"""
+        self.ensure_one()
+        self.write({
+            'last_request_input': False,
+            'last_request_date': False,
+            'last_request_output': False,
+        })
+        return True
+    
+    def action_clear_test_output(self):
+        """Clear the test output field"""
+        self.ensure_one()
+        self.write({
+            'test_output': False,
+        })
+        return True
+    
+    def action_refresh_sample(self):
+        """Refresh/reload the sample request field in the UI"""
+        self.ensure_one()
+        return True
+    
+    def action_clear_sample_request(self):
+        """Clear the sample request payload field"""
+        self.ensure_one()
+        self.write({
+            'sample_request_payload': False,
+        })
+        return True
 
     def _exec_code(self, request_raw, request_headers=None, request_method='POST'):
         """Execute custom Python code with request object as input"""
@@ -1064,7 +1250,7 @@ result = {
         
         # If pin_request is enabled and no code, just return the request for inspection
         if self.pin_request and not self.python_code:
-            return {
+            result = {
                 'ok': True,
                 'message': 'Request captured successfully',
                 'data': {
@@ -1083,6 +1269,9 @@ result = {
                     'github': 'https://github.com/diegofrodrigues'
                 }
             }
+            # Save monitoring data asynchronously
+            self._save_request_monitor_async(request_raw, request_headers, request_method, result)
+            return result
         
         # If not pinned, code is required
         if not self.python_code:
@@ -1181,6 +1370,9 @@ result = {
                 'reason': str(e),
                 'traceback': error_detail
             }
+        
+        # Save monitoring data asynchronously
+        self._save_request_monitor_async(request_raw, request_headers, request_method, result)
         
         return result
 

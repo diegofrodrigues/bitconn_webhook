@@ -258,28 +258,36 @@ class IrActionsServer(models.Model):
                 _logger.info(f"[Python Payload] Response Headers: {dict(resp.headers)}")
                 _logger.info(f"[Python Payload] Response Body: {resp.text[:500]}")
                 
-                # Format result: Status + pretty body when JSON
-                formatted = resp.text or ''
+                # Build structured JSON result
+                result_data = {
+                    'url': url,
+                    'status': resp.status_code,
+                    'request': {},
+                    'response': {}
+                }
+                
+                # Parse request body
                 try:
-                    ctype = (resp.headers.get('Content-Type') or '').lower()
+                    result_data['request'] = _json.loads(data)
                 except Exception:
-                    ctype = ''
-                if 'application/json' in ctype or (formatted.strip().startswith('{') or formatted.strip().startswith('[')):
-                    try:
-                        parsed = resp.json()
-                    except Exception:
-                        try:
-                            parsed = json.loads(formatted)
-                        except Exception:
-                            parsed = None
-                    if parsed is not None:
-                        try:
-                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
-                        except Exception:
-                            pass
-                self.sudo().write({'bitconn_last_result': f"URL: {url}\n\nRequest Body:\n{data}\n\nStatus: {resp.status_code}\n\nResponse:\n{formatted}"})
+                    result_data['request'] = {'raw': data}
+                
+                # Parse response body
+                try:
+                    result_data['response'] = resp.json()
+                except Exception:
+                    result_data['response'] = {'raw': resp.text}
+                
+                # Save as formatted JSON
+                formatted_json = _json.dumps(result_data, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_last_result': formatted_json})
             except Exception as e:
-                self.sudo().write({'bitconn_last_result': f"Error: {e}"})
+                error_data = {
+                    'error': str(e),
+                    'url': url if 'url' in locals() else None
+                }
+                error_json = _json.dumps(error_data, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_last_result': error_json})
             return False
         # If manual payload: send body as-is (mantém lógica anterior)
         if self.bitconn_manual_payload and self.bitconn_manual_payload_text:
@@ -394,28 +402,37 @@ class IrActionsServer(models.Model):
                 # Encode data as UTF-8 bytes to handle accents correctly
                 data_bytes = data.encode('utf-8')
                 resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
-                # Format result: Status + pretty body when JSON
-                formatted = resp.text or ''
+                
+                # Build structured JSON result
+                result_data = {
+                    'url': url,
+                    'status': resp.status_code,
+                    'request': {},
+                    'response': {}
+                }
+                
+                # Parse request body
                 try:
-                    ctype = (resp.headers.get('Content-Type') or '').lower()
+                    result_data['request'] = _json.loads(data)
                 except Exception:
-                    ctype = ''
-                if 'application/json' in ctype or (formatted.strip().startswith('{') or formatted.strip().startswith('[')):
-                    try:
-                        parsed = resp.json()
-                    except Exception:
-                        try:
-                            parsed = json.loads(formatted)
-                        except Exception:
-                            parsed = None
-                    if parsed is not None:
-                        try:
-                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
-                        except Exception:
-                            pass
-                self.sudo().write({'bitconn_last_result': f"Status: {resp.status_code}\nBody:\n{formatted}"})
+                    result_data['request'] = {'raw': data}
+                
+                # Parse response body
+                try:
+                    result_data['response'] = resp.json()
+                except Exception:
+                    result_data['response'] = {'raw': resp.text}
+                
+                # Save as formatted JSON
+                formatted_json = _json.dumps(result_data, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_last_result': formatted_json})
             except Exception as e:
-                self.sudo().write({'bitconn_last_result': f"Error: {e}"})
+                error_data = {
+                    'error': str(e),
+                    'url': url if 'url' in locals() else None
+                }
+                error_json = _json.dumps(error_data, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_last_result': error_json})
             return False
         # Otherwise: build fields list and use helper
 
@@ -426,40 +443,54 @@ class IrActionsServer(models.Model):
         # Format and store result on the action for visibility
         try:
             if result and result.get('error'):
-                self.sudo().write({'bitconn_last_result': f"Error: {result.get('error')}"})
+                error_data = {
+                    'error': result.get('error'),
+                    'url': result.get('url')
+                }
+                error_json = json.dumps(error_data, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_last_result': error_json})
             else:
                 status = result.get('status') if isinstance(result, dict) else None
                 url = result.get('url', 'N/A')
                 req_body = result.get('request_body', '')
                 text = result.get('response') if isinstance(result, dict) else ''
-                formatted = text or ''
-                if formatted:
-                    try:
-                        if formatted.strip().startswith('{') or formatted.strip().startswith('['):
-                            parsed = json.loads(formatted)
-                            formatted = json.dumps(parsed, indent=2, ensure_ascii=False)
-                    except Exception:
-                        pass
                 
-                # Pretty print request body if JSON
-                formatted_req = req_body
-                if req_body:
-                    try:
-                        if req_body.strip().startswith('{') or req_body.strip().startswith('['):
-                            parsed_req = json.loads(req_body)
-                            formatted_req = json.dumps(parsed_req, indent=2, ensure_ascii=False)
-                    except Exception:
-                        pass
+                # Build structured JSON result
+                result_data = {
+                    'url': url,
+                    'status': status,
+                    'request': {},
+                    'response': {}
+                }
                 
-                # Se resposta vazia, adicionar mensagem explicativa
-                if not formatted or not formatted.strip():
-                    if status == 400:
-                        formatted = "(Empty response - Bad Request)\nPossible causes:\n- Invalid URL format\n- Missing/incorrect authentication\n- Invalid payload format"
+                # Parse request body
+                try:
+                    result_data['request'] = json.loads(req_body)
+                except Exception:
+                    result_data['request'] = {'raw': req_body}
+                
+                # Parse response body
+                try:
+                    result_data['response'] = json.loads(text)
+                except Exception:
+                    if not text or not text.strip():
+                        if status == 400:
+                            result_data['response'] = {
+                                'error': 'Empty response - Bad Request',
+                                'possible_causes': [
+                                    'Invalid URL format',
+                                    'Missing/incorrect authentication',
+                                    'Invalid payload format'
+                                ]
+                            }
+                        else:
+                            result_data['response'] = {'raw': text or '(Empty response)'}
                     else:
-                        formatted = "(Empty response)"
+                        result_data['response'] = {'raw': text}
                 
-                result_text = f"URL: {url}\n\nRequest Body:\n{formatted_req}\n\nStatus: {status}\n\nResponse:\n{formatted}"
-                self.sudo().write({'bitconn_last_result': result_text})
+                # Save as formatted JSON
+                formatted_json = json.dumps(result_data, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_last_result': formatted_json})
         except Exception:
             # best-effort only
             pass

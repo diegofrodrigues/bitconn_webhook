@@ -112,28 +112,59 @@
                     The code will run with the configured user's permissions and full access to all models.
                   </div>
                 </group>
+                
+                <group>
+                  <separator string="HTTP Methods"/>
+                </group>
+                <group col="2">
+                  <field name="inbound_allowed_methods" widget="radio"/>
+                  <group colspan="2" invisible="inbound_allowed_methods != 'CUSTOM'">
+                    <group>
+                      <field name="inbound_methods_get"/>
+                      <field name="inbound_methods_post"/>
+                      <field name="inbound_methods_put"/>
+                    </group>
+                    <group>
+                      <field name="inbound_methods_patch"/>
+                      <field name="inbound_methods_delete"/>
+                    </group>
+                  </group>
+                </group>
+                
                 <group>
                   <separator string="Python Code"/>
                   <div class="text-muted">
-                    Write your Python code below. Available variables:
-                    <ul>
-                      <li><code>request</code>: Request object with:
-                        <ul>
-                          <li><code>request['body']</code>: Raw request body (string)</li>
-                          <li><code>request['json']</code>: Parsed JSON body (dict)</li>
-                          <li><code>request['headers']</code>: Request headers (dict)</li>
-                          <li><code>request['method']</code>: HTTP method (POST, GET, etc.)</li>
-                        </ul>
-                      </li>
-                      <li><code>env</code>: Odoo environment (with configured user)</li>
-                      <li><code>user_id</code>: Configured user ID</li>
-                      <li><code>json</code>: JSON module for parsing</li>
-                    </ul>
-                    <strong>Important:</strong> Set <code>result</code> variable to return custom response. The result will be shown in the Test Output.
+                    Write your Python code below. Set <code>result</code> variable to return custom response.
+                    <br/>
+                    <strong>💡 Tip:</strong> See the <strong>Help</strong> tab for complete documentation and available variables.
                   </div>
                 </group>
                 <group>
-                  <field name="python_code" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'lineNumbers': true}" placeholder="# Example:&#10;data = request['json']&#10;partner = env['res.partner'].create({&#10;    'name': data.get('name'),&#10;    'email': data.get('email')&#10;})&#10;result = {'ok': True, 'partner_id': partner.id, 'name': partner.name}"/>
+                  <field name="python_code" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'lineNumbers': true}" placeholder="# Available variables: request, env, user_id, json&#10;# Set result variable to return response&#10;&#10;# Example: Create a partner from webhook data&#10;data = request['json']&#10;partner = env['res.partner'].create({&#10;    'name': data.get('name'),&#10;    'email': data.get('email')&#10;})&#10;result = {'ok': True, 'partner_id': partner.id, 'name': partner.name}"/>
+                </group>
+                
+                <group>
+                  <separator string="Request Monitor (Real-time)"/>
+                  <div class="text-muted">
+                    These fields update automatically when a webhook request is received while you're on this tab.
+                  </div>
+                </group>
+                <group col="2" class="o_group o_inner_group">
+                  <group class="w-100">
+                    <label for="last_request_input" string="Last Request Input"/>
+                    <field name="last_request_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                    <field name="last_request_date" readonly="1"/>
+                  </group>
+                  <group class="w-100">
+                    <label for="last_request_output" string="Last Request Output"/>
+                    <field name="last_request_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                  </group>
+                </group>
+                <group>
+                  <div class="d-flex align-items-center">
+                    <button name="action_refresh_monitor" type="object" string="Refresh Monitor" class="btn-primary me-2" icon="fa-refresh"/>
+                    <button name="action_clear_request_input" type="object" string="Clear Monitor" class="btn-secondary" icon="fa-eraser"/>
+                  </div>
                 </group>
                 
                 <group>
@@ -141,21 +172,19 @@
                 </group>
                 <group col="2">
                   <group class="w-100" colspan="2">
-                    <field name="pin_request"/>
-                    <div class="text-muted" invisible="pin_request == False">
-                      <i class="fa fa-thumb-tack"/> Using Sample Request (below) as test input.
-                      <br/>
-                      <strong>Note:</strong> Webhook responses will include author/support information when Pin Request is enabled.
-                    </div>
+                    <field name="enable_test"/>
                   </group>
-                  <group class="w-100" colspan="2" invisible="pin_request == True">
+                  <group class="w-100" colspan="2" invisible="enable_test == False or pin_request == True">
                     <label for="test_input" string="Test Input (Request Body)"/>
                     <field name="test_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
                   </group>
-                  <group class="w-100" colspan="2">
-                    <button name="action_test_code" type="object" string="Test Code" class="btn-primary" icon="fa-play"/>
+                  <group class="w-100" colspan="2" invisible="enable_test == False">
+                    <div class="d-flex align-items-center">
+                      <button name="action_test_code" type="object" string="Test Code" class="btn-primary me-2" icon="fa-play"/>
+                      <button name="action_clear_test_output" type="object" string="Clear Output" class="btn-secondary" icon="fa-eraser"/>
+                    </div>
                   </group>
-                  <group class="w-100" colspan="2">
+                  <group class="w-100" colspan="2" invisible="enable_test == False">
                     <label for="test_output" string="Test Output (Result Variable)"/>
                     <field name="test_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                   </group>
@@ -163,67 +192,270 @@
                 
                 <group>
                   <separator string="Sample Request (Latest Received)"/>
-                  <div class="text-muted">
-                    This field automatically captures the last request received by this webhook. 
-                    <span invisible="pin_request == False"><strong>Currently pinned for testing.</strong></span>
-                    <span invisible="pin_request == True">Check "Pin Request for Testing" above to use this as test input.</span>
-                  </div>
                 </group>
-                <group>
-                  <field name="sample_request_payload" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                <group col="2">
+                  <group class="w-100" colspan="2">
+                    <field name="pin_request"/>
+                    <div class="text-muted" invisible="pin_request == False">
+                      <i class="fa fa-thumb-tack"/> Using this sample as test input. Uncheck above to use custom Test Input.
+                      <br/>
+                      <strong>Note:</strong> Webhook responses will include author/support information when Pin Request is enabled.
+                    </div>
+                  </group>
+                  <group class="w-100" colspan="2" invisible="pin_request == False">
+                    <field name="sample_request_payload" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                  </group>
+                  <group class="w-100" colspan="2" invisible="pin_request == False">
+                    <div class="d-flex align-items-center">
+                      <button name="action_refresh_sample" type="object" string="Refresh Sample" class="btn-primary me-2" icon="fa-refresh"/>
+                      <button name="action_clear_sample_request" type="object" string="Clear Sample" class="btn-secondary" icon="fa-eraser"/>
+                    </div>
+                  </group>
                 </group>
               </page>
 
               <page string="Outbound">
                 <group col="2">
                   <field name="outbound_enabled"/>
+                  <field name="outbound_method"/>
                   <field name="outbound_url" colspan="2"/>
                   <field name="outbound_headers" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
                   <separator string="Test"/>
                   <field name="outbound_test_body" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2"/>
-                    <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary" icon="fa-paper-plane"/>
+                    <div class="d-flex align-items-center">
+                      <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary me-2" icon="fa-paper-plane"/>
+                      <button name="action_clear_outbound_test_result" type="object" string="Clear Test Result" class="btn-secondary" icon="fa-eraser"/>
+                    </div>
                   <field name="outbound_test_result" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="0" colspan="2"/>
                 </group>
               </page>
               <page string="Help">
                 <group>
-                  <separator string="Create"/>
+                  <separator string="Python Code - Available Variables"/>
                 </group>
                 <group>
-                  <div class="text-muted" name="desc_create">Creates a new record. Use when an external system submits data to insert into Odoo. Required fields depend on the model (inspect schema if available).</div>
-                </group>
-                <group>
-                  <field name="example_create" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
-                </group>
+                  <div class="alert alert-info" role="status">
+                    <h4>📚 Python Code Documentation</h4>
+                    <p>When custom code execution is enabled, you have access to the following variables in your Python code:</p>
+                    
+                    <h5><code>request</code> - Request object</h5>
+                    <ul>
+                      <li><code>request['body']</code> - Raw request body as string. Use for signature validation, XML parsing, or when you need the original text.</li>
+                      <li><code>request['json']</code> - Parsed JSON body as Python dict. Most convenient for accessing request data.</li>
+                      <li><code>request['headers']</code> - Request headers as dict. Access with <code>request['headers'].get('Content-Type')</code></li>
+                      <li><code>request['method']</code> - HTTP method (GET, POST, PUT, PATCH, DELETE). Use to route different logic based on method.</li>
+                    </ul>
+                    
+                    <h5><code>env</code> - Odoo Environment</h5>
+                    <ul>
+                      <li>Full Odoo environment with configured user permissions</li>
+                      <li>Access any model: <code>env['res.partner']</code>, <code>env['sale.order']</code>, etc.</li>
+                      <li>Execute CRUD operations: <code>.create()</code>, <code>.search()</code>, <code>.write()</code>, <code>.unlink()</code></li>
+                    </ul>
+                    
+                    <h5><code>user_id</code> - Configured User ID</h5>
+                    <ul>
+                      <li>ID of the user configured in the webhook (integer)</li>
+                      <li>Useful for logging or filtering: <code>env['res.users'].browse(user_id)</code></li>
+                    </ul>
+                    
+                    <h5><code>json</code> - JSON Module</h5>
+                    <ul>
+                      <li>Python's json module for parsing/dumping</li>
+                      <li><code>json.loads()</code>, <code>json.dumps()</code></li>
+                    </ul>
+                    
+                    <h5><code>result</code> - Return Variable ⚠️</h5>
+                    <ul>
+                      <li><strong>Important:</strong> Set this variable to define the webhook response</li>
+                      <li>Must be a dict: <code>result = {'ok': True, 'message': 'Success'}</code></li>
+                      <li>Will be returned as JSON to the webhook caller</li>
+                      <li>If not set, an error message will be returned</li>
+                    </ul>
+                    
+                    <h5>💡 Example - Filter by HTTP Method</h5>
+                    <pre><code>if request['method'] == 'GET':
+    # Handle GET - return data
+    partners = env['res.partner'].search([('customer_rank', '>', 0)])
+    result = {'ok': True, 'count': len(partners), 'partners': partners.mapped('name')}
 
-                <group>
-                  <separator string="Write"/>
-                </group>
-                <group>
-                  <div class="text-muted" name="desc_write">Updates records found by the domain. Use to change specific fields without recreating the record. Domain must return at least one record.</div>
-                </group>
-                <group>
-                  <field name="example_write" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
-                </group>
+elif request['method'] == 'POST':
+    # Handle POST - create record
+    data = request['json']
+    partner = env['res.partner'].create({'name': data.get('name'), 'email': data.get('email')})
+    result = {'ok': True, 'id': partner.id, 'created': True}
 
-                <group>
-                  <separator string="Unlink"/>
-                </group>
-                <group>
-                  <div class="text-muted" name="desc_unlink">Deletes records returned by the domain. Destructive operation; enable 'Can Unlink' and use carefully.</div>
-                </group>
-                <group>
-                  <field name="example_unlink" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
-                </group>
+elif request['method'] == 'DELETE':
+    # Handle DELETE - remove record
+    partner_id = request['json'].get('id')
+    partner = env['res.partner'].browse(partner_id)
+    partner.unlink()
+    result = {'ok': True, 'deleted': True}
 
+else:
+    result = {'ok': False, 'error': 'method_not_supported'}</code></pre>
+                  </div>
+                </group>
+                
                 <group>
-                  <separator string="Search Advanced"/>
+                  <separator string="CRUD Operations - Inbound Webhook"/>
                 </group>
                 <group>
-                  <div class="text-muted" name="desc_search_adv">Searches records and returns structured data. Supports advanced spec in 'fields' using dict objects for nested relations. Can be used via the public endpoint or inside Server Actions (Manual Payload) to build outbound payloads.</div>
+                  <div class="alert alert-info" role="status">
+                    <h4>📥 Inbound CRUD Operations</h4>
+                    <p>When custom code execution is <strong>disabled</strong>, the webhook accepts standard CRUD operations via JSON payload.</p>
+                    
+                    <h5>📝 Create - Insert New Records</h5>
+                    <p><strong>Method:</strong> <code>"method": "create"</code></p>
+                    <p><strong>Use case:</strong> External system sends data to create a new record in Odoo</p>
+                    <p><strong>Required:</strong> <code>model</code> and <code>values</code> fields</p>
+                    <p><strong>Returns:</strong> <code>{'ok': True, 'id': &lt;record_id&gt;}</code></p>
+                    <pre><code>{
+  "model": "res.partner",
+  "method": "create",
+  "values": {
+    "name": "New Partner",
+    "email": "partner@example.com",
+    "phone": "+5511999999999"
+  }
+}</code></pre>
+                    
+                    <h5>✏️ Write - Update Existing Records</h5>
+                    <p><strong>Method:</strong> <code>"method": "write"</code></p>
+                    <p><strong>Use case:</strong> Update records matching a domain filter</p>
+                    <p><strong>Required:</strong> <code>model</code>, <code>domain</code>, and <code>values</code></p>
+                    <p><strong>Returns:</strong> <code>{'ok': True, 'ids': [...]}</code></p>
+                    <pre><code>{
+  "model": "res.partner",
+  "method": "write",
+  "domain": [["email", "=", "partner@example.com"]],
+  "values": {
+    "comment": "Updated via webhook"
+  }
+}</code></pre>
+                    
+                    <h5>🗑️ Unlink - Delete Records</h5>
+                    <p><strong>Method:</strong> <code>"method": "unlink"</code></p>
+                    <p><strong>Use case:</strong> Delete records matching a domain (destructive!)</p>
+                    <p><strong>Required:</strong> <code>model</code> and <code>domain</code></p>
+                    <p><strong>Security:</strong> Must enable "Can Unlink" permission</p>
+                    <p><strong>Returns:</strong> <code>{'ok': True, 'ids': [...]}</code></p>
+                    <pre><code>{
+  "model": "res.partner",
+  "method": "unlink",
+  "domain": [["id", "in", [10, 11]]]
+}</code></pre>
+                    
+                    <h5>🔍 Search - Find and Read Records</h5>
+                    <p><strong>Method:</strong> <code>"method": "search"</code></p>
+                    <p><strong>Use case:</strong> Query records and return structured data with nested relations</p>
+                    <p><strong>Required:</strong> <code>model</code></p>
+                    <p><strong>Optional:</strong> <code>domain</code>, <code>fields</code>, <code>limit</code>, <code>offset</code>, <code>order</code></p>
+                    <p><strong>Advanced:</strong> Use dict spec in <code>fields</code> for nested relations</p>
+                    <p><strong>Returns:</strong> <code>{'ok': True, 'count': N, 'records': [...]}</code></p>
+                    <pre><code>{
+  "model": "sale.order",
+  "method": "search",
+  "domain": [["state", "=", "sale"]],
+  "limit": 2,
+  "fields": [
+    "id",
+    "name",
+    {"partner_id": ["id", "name", "email"]},
+    {"order_line": [
+      "id",
+      "name",
+      "product_uom_qty",
+      {"product_id": ["id", "default_code", "name"]}
+    ]}
+  ]
+}</code></pre>
+                    
+                    <h5>📖 Read - Get Specific Records by ID</h5>
+                    <p><strong>Method:</strong> <code>"method": "read"</code></p>
+                    <p><strong>Use case:</strong> Fetch specific records by their IDs</p>
+                    <p><strong>Required:</strong> <code>model</code> and <code>ids</code></p>
+                    <p><strong>Optional:</strong> <code>fields</code> (same advanced spec as search)</p>
+                    <p><strong>Returns:</strong> <code>{'ok': True, 'records': [...]}</code></p>
+                  </div>
+                </group>
+                
+                <group>
+                  <separator string="Server Actions - Outbound Webhook"/>
                 </group>
                 <group>
-                  <field name="example_search_advanced" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}"/>
+                  <div class="alert alert-info" role="status">
+                    <h4>📤 Outbound Webhooks via Server Actions</h4>
+                    <p>Send data from Odoo to external systems using Server Actions with Bitconn Webhook integration.</p>
+                    
+                    <h5>🎯 How it Works</h5>
+                    <ul>
+                      <li><strong>Trigger:</strong> Automation rules, manual execution, or scheduled actions</li>
+                      <li><strong>Action Type:</strong> Select "Bitconn Webhook" in Server Action</li>
+                      <li><strong>Configuration:</strong> Choose webhook, select fields, or write custom Python payload</li>
+                      <li><strong>Execution:</strong> Data is sent via HTTP request to configured URL</li>
+                    </ul>
+                    
+                    <h5>🔧 Configuration Modes</h5>
+                    
+                    <h6>1️⃣ Field Selection (Simple)</h6>
+                    <p>Select which fields to include in the payload. Good for straightforward data export.</p>
+                    <ul>
+                      <li>Choose fields from the model</li>
+                      <li>System automatically builds JSON payload</li>
+                      <li>Supports simple fields only (no nested relations in UI)</li>
+                    </ul>
+                    
+                    <h6>2️⃣ Manual Payload (Advanced)</h6>
+                    <p>Write JSON structure manually with placeholder support for dynamic values.</p>
+                    <ul>
+                      <li><strong>Placeholders:</strong> Use <code>{{field_name}}</code> for simple fields</li>
+                      <li><strong>Relations:</strong> Use <code>{{relation.field}}</code> for nested data</li>
+                      <li><strong>Advanced Spec:</strong> Use <code>"fields": [...]</code> with dict objects for nested relations (same as search)</li>
+                    </ul>
+                    <pre><code>{
+  "customer": "{{name}}",
+  "email": "{{email}}",
+  "order_ref": "{{order_id.name}}",
+  "status": "active"
+}</code></pre>
+                    
+                    <h6>3️⃣ Python Payload (Maximum Flexibility)</h6>
+                    <p>Write Python code to build custom payloads with business logic.</p>
+                    <ul>
+                      <li><strong>Variables:</strong> <code>record</code>, <code>records</code>, <code>env</code></li>
+                      <li><strong>Return:</strong> Set <code>result</code> variable with your payload dict</li>
+                      <li><strong>Logic:</strong> Add conditions, calculations, API calls, etc.</li>
+                    </ul>
+                    <pre><code># Build custom payload with logic
+total = sum(record.order_line.mapped('price_total'))
+
+result = {
+    "order_id": record.name,
+    "customer": record.partner_id.name,
+    "total": total,
+    "currency": record.currency_id.name,
+    "status": "approved" if total > 1000 else "pending"
+}</code></pre>
+                    
+                    <h5>📊 Response Handling</h5>
+                    <p>After execution, check the <strong>Last Result</strong> field (JSON format):</p>
+                    <pre><code>{
+  "url": "https://api.example.com/webhook",
+  "status": 200,
+  "request": { /* your payload */ },
+  "response": { /* API response */ }
+}</code></pre>
+                    
+                    <h5>💡 Use Cases</h5>
+                    <ul>
+                      <li>📧 Send order confirmations to external email service</li>
+                      <li>💬 Post messages to Slack/Teams when lead is created</li>
+                      <li>📦 Sync inventory to external warehouse system</li>
+                      <li>💳 Notify payment gateway of invoice status changes</li>
+                      <li>📊 Push analytics data to external dashboard</li>
+                    </ul>
+                  </div>
                 </group>
               </page>
             </notebook>
