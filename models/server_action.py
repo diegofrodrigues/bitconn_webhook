@@ -248,7 +248,10 @@ class IrActionsServer(models.Model):
                     _logger.info(f"[Python Payload] URL NÃO será processada - usando original")
                 
                 data = _json.dumps(body, ensure_ascii=False)
-                _logger.info(f"[Python Payload] Enviando POST para: {url}")
+                
+                # Use the configured HTTP method
+                method = (self.bitconn_webhook_id.outbound_method or 'POST').upper()
+                _logger.info(f"[Python Payload] Enviando {method} para: {url}")
                 _logger.info(f"[Python Payload] Headers: {headers}")
                 _logger.info(f"[Python Payload] Body (raw): {repr(data[:500])}")
                 _logger.info(f"[Python Payload] Body length: {len(data)}")
@@ -256,7 +259,16 @@ class IrActionsServer(models.Model):
                 # Encode data as UTF-8 bytes to handle accents correctly
                 data_bytes = data.encode('utf-8')
                 
-                resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
+                if method == 'GET':
+                    resp = requests.get(url, headers=headers, timeout=15)
+                elif method == 'PUT':
+                    resp = requests.put(url, data=data_bytes, headers=headers, timeout=15)
+                elif method == 'PATCH':
+                    resp = requests.patch(url, data=data_bytes, headers=headers, timeout=15)
+                elif method == 'DELETE':
+                    resp = requests.delete(url, headers=headers, timeout=15)
+                else:  # POST (default)
+                    resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
                 
                 _logger.info(f"[Python Payload] Response Status: {resp.status_code}")
                 _logger.info(f"[Python Payload] Response Headers: {dict(resp.headers)}")
@@ -405,7 +417,19 @@ class IrActionsServer(models.Model):
                 data = _json.dumps(body, ensure_ascii=False)
                 # Encode data as UTF-8 bytes to handle accents correctly
                 data_bytes = data.encode('utf-8')
-                resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
+                
+                # Use the configured HTTP method
+                method = (self.bitconn_webhook_id.outbound_method or 'POST').upper()
+                if method == 'GET':
+                    resp = requests.get(url, headers=headers, timeout=15)
+                elif method == 'PUT':
+                    resp = requests.put(url, data=data_bytes, headers=headers, timeout=15)
+                elif method == 'PATCH':
+                    resp = requests.patch(url, data=data_bytes, headers=headers, timeout=15)
+                elif method == 'DELETE':
+                    resp = requests.delete(url, headers=headers, timeout=15)
+                else:  # POST (default)
+                    resp = requests.post(url, data=data_bytes, headers=headers, timeout=15)
                 
                 # Build structured JSON result
                 result_data = {
