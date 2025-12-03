@@ -4,6 +4,7 @@ import uuid
 import secrets
 import json
 import logging
+import builtins
 
 _logger = logging.getLogger(__name__)
 
@@ -19,6 +20,8 @@ class BitconnWebhook(models.Model):
     can_write = fields.Boolean(string='Can Write', default=True, tracking=True)
     can_unlink = fields.Boolean(string='Can Unlink', default=False, help='Dangerous. Only enable if you really trust the caller.', tracking=True)
     can_code = fields.Boolean(string='Can Execute Code', default=False, help='Allow execution of custom Python code. Only enable if you really trust the caller.', tracking=True)
+    # (flag removed) Note: executed code will always run with module globals
+    # so imports and normal builtins are available.
     allowed_model_ids = fields.Many2many('ir.model', string='Allowed Models', help='Restrict operations to these models. Leave empty to allow all models.', tracking=True)
 
     # Inbound Authentication Configuration
@@ -1028,27 +1031,23 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
     def action_test_code(self):
         """Test custom Python code execution with test_input as request body"""
         self.ensure_one()
-        
+
         if not self.can_code:
             raise UserError(_('Custom code execution is not enabled. Enable "Can Execute Code" first.'))
-        
+
         if not self.python_code:
             raise UserError(_('Please provide Python code to test.'))
-        
-        # Use pinned request or test input
+
+        # Prepare request object (pin_request or test_input)
         if self.pin_request:
             sample = self.sample_request_payload or ''
             if not sample:
                 raise UserError(_('No sample request available. Please receive a webhook first or uncheck "Pin Request".'))
-            
-            # Try to parse as complete request object (with body, headers, method)
             try:
                 sample_obj = json.loads(sample)
                 if isinstance(sample_obj, dict) and 'body' in sample_obj:
-                    # It's a complete request object saved by the controller
                     request = sample_obj
                 else:
-                    # It's just a payload, wrap it
                     request = {
                         'body': sample,
                         'headers': {},
@@ -1056,7 +1055,6 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
                         'json': sample_obj if isinstance(sample_obj, dict) else {}
                     }
             except Exception:
-                # Plain text, use as body
                 request = {
                     'body': sample,
                     'headers': {},
@@ -1065,86 +1063,48 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
                 }
         else:
             request_body = self.test_input or ''
-            
-            # Prepare request object
             request = {
                 'body': request_body,
                 'headers': {},
                 'method': 'POST',
             }
-            
-            # Try to parse body as JSON
             try:
                 request['json'] = json.loads(request_body)
             except Exception:
                 request['json'] = {}
-        
-        # Safe execution environment with restricted builtins
-        safe_globals = {
-            '__builtins__': {
-                'True': True,
-                'False': False,
-                'None': None,
-                'str': str,
-                'int': int,
-                'float': float,
-                'bool': bool,
-                'list': list,
-                'dict': dict,
-                'tuple': tuple,
-                'set': set,
-                'len': len,
-                'range': range,
-                'enumerate': enumerate,
-                'zip': zip,
-                'isinstance': isinstance,
-                'hasattr': hasattr,
-                'getattr': getattr,
-                'sum': sum,
-                'min': min,
-                'max': max,
-                'abs': abs,
-                'round': round,
-                'sorted': sorted,
-                'any': any,
-                'all': all,
-            },
+
+        # Execution environment: always use module globals
+        exec_globals = globals().copy()
+        exec_globals.update({
             'request': request,
             'env': self.env(user=self.user_id.id),
             'user_id': self.user_id.id,
             'json': json,
             '_': _,
-        }
-        
+        })
+
         try:
-            # Execute code
-            exec(self.python_code, safe_globals)
-            
-            # Get result from executed code
-            if 'result' in safe_globals:
-                result = safe_globals['result']
-                # Format output
-                if isinstance(result, dict):
-                    output = json.dumps(result, indent=2, ensure_ascii=False)
-                elif isinstance(result, (list, tuple)):
-                    output = json.dumps(result, indent=2, ensure_ascii=False)
-                else:
-                    output = str(result)
-            else:
-                output = 'Code executed successfully but no result variable was set.\nSet result = {...} in your code to see output here.'
-            
-            # Write output
-            self.test_output = output
-            
-            # Return True to just refresh the form without changing tabs (like action_test_outbound)
-            return True
-            
+            exec(self.python_code, exec_globals)
         except Exception as e:
             import traceback
-            error_detail = traceback.format_exc()
-            self.test_output = f"ERROR: {str(e)}\n\n{error_detail}"
-            
-            # Return True to refresh without changing tabs
+            self.test_output = f"ERROR: {str(e)}\n\n{traceback.format_exc()}"
+            return True
+
+        try:
+            if 'result' in exec_globals:
+                result = exec_globals['result']
+                if isinstance(result, dict):
+                    self.test_output = json.dumps(result, indent=2, ensure_ascii=False)
+                elif isinstance(result, (list, tuple)):
+                    self.test_output = json.dumps(result, indent=2, ensure_ascii=False)
+                else:
+                    self.test_output = str(result)
+            else:
+                self.test_output = 'Code executed successfully but no result variable was set.\nSet result = {...} in your code to see output here.'
+            return True
+        except Exception:
+            import traceback
+            self.test_output = f"ERROR: {traceback.format_exc()}"
             return True
 
     def action_save_last_request(self):
@@ -1283,53 +1243,112 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
             bitconn_last_request_raw=request_raw[:10000] if request_raw else '',
             bitconn_save_sample=True
         )
-        
-        # Safe execution environment
-        safe_globals = {
-            '__builtins__': {
-                'True': True,
-                'False': False,
-                'None': None,
-                'str': str,
-                'int': int,
-                'float': float,
-                'bool': bool,
-                'list': list,
-                'dict': dict,
-                'tuple': tuple,
-                'set': set,
-                'len': len,
-                'range': range,
-                'enumerate': enumerate,
-                'zip': zip,
-                'isinstance': isinstance,
-                'hasattr': hasattr,
-                'getattr': getattr,
-                'sum': sum,
-                'min': min,
-                'max': max,
-                'abs': abs,
-                'round': round,
-                'sorted': sorted,
-                'any': any,
-                'all': all,
-            },
+
+        # start from module globals so imports and builtins keep working
+        exec_globals = globals().copy()
+
+        # Ensure the method executes in the context of the webhook-configured user.
+        # Rebind `self` to a recordset using that user's environment so all subsequent
+        # ORM calls (including post-write hooks, message_post, etc.) execute as
+        # the configured `user_id` rather than the incoming HTTP/public user.
+        # NOTE: we intentionally do NOT use `su=True` here to respect ACLs.
+        self = self.with_env(self.env(user=self.user_id.id))
+        env_exec = self.env
+
+        # Try to provide `model`, `record`, `records` when payload contains them
+        model = None
+        record = None
+        records = None
+        try:
+            if isinstance(request_obj.get('json'), dict):
+                model_name = request_obj['json'].get('_model') or request_obj['json'].get('model')
+                rec_id = request_obj['json'].get('_id') or request_obj['json'].get('id')
+                if model_name and model_name in env_exec:
+                    model = env_exec[model_name]
+                    if rec_id:
+                        try:
+                            rid = int(rec_id)
+                            record = model.browse(rid)
+                            records = model.browse([rid])
+                        except Exception:
+                            record = None
+                            records = model
+        except Exception:
+            model = None
+
+        exec_globals.update({
             'request': request_obj,
-            'env': self.env(user=self.user_id.id),
-            'user_id': self.user_id.id,
+            # Use the freshly created env (for webhook.user) so the code runs
+            # in the context of that user and cannot see the request's env.
+            'env': env_exec,
+            'user_id': int(self.user_id.id or 1),
             'json': json,
             '_': _,
-        }
+            'model': model or env_exec['ir.model'],
+            'record': record,
+            'records': records,
+            'UserError': UserError,
+            'log': _logger,
+            '_logger': _logger,
+        })
+
+        # Temporarily override `odoo.http.request` so any user code
+        # that imports `odoo.http.request` sees an object whose `env`
+        # is `env_exec` (the webhook user). This prevents accidental
+        # use of the incoming HTTP/public user's env (uid=4).
+        try:
+            import odoo.http as _odoo_http
+            _orig_request = getattr(_odoo_http, 'request', None)
+        except Exception:
+            _odoo_http = None
+            _orig_request = None
+
+        try:
+            if _odoo_http is not None:
+                # Minimal proxy preserving a few commonly-used attrs
+                class _ReqProxy(object):
+                    def __init__(self, orig, env):
+                        self.env = env
+                        self.httprequest = getattr(orig, 'httprequest', None) if orig is not None else None
+                        self.params = getattr(orig, 'params', {}) if orig is not None else {}
+                        self.jsonrequest = getattr(orig, 'jsonrequest', None) if orig is not None else None
+
+                try:
+                    _odoo_http.request = _ReqProxy(_orig_request, env_exec)
+                except Exception:
+                    # If we cannot set the proxy, continue without overriding
+                    _odoo_http = None
+
+            try:
+                exec(self.python_code, exec_globals)
+            finally:
+                # Restore original request to avoid side-effects
+                try:
+                    if _odoo_http is not None:
+                        _odoo_http.request = _orig_request
+                except Exception:
+                    pass
+
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            result = {
+                'ok': False,
+                'error': 'code_execution_failed',
+                'reason': str(e),
+                'traceback': error_detail
+            }
+            # Save monitoring data asynchronously and return
+            self._save_request_monitor_async(request_raw, request_headers, request_method, result)
+            return result
         
         result = {'ok': False}
-        
+
         try:
-            # Execute code
-            exec(self.python_code, safe_globals)
-            
-            # Check if result was set in executed code
-            if 'result' in safe_globals:
-                result = safe_globals['result']
+            # The code has already been executed into `exec_globals` above.
+            # Inspect `exec_globals` for the `result` variable and normalize it.
+            if 'result' in exec_globals:
+                result = exec_globals['result']
                 # Validate that result is not the request object itself
                 if result is request_obj:
                     result = {

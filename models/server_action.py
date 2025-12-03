@@ -101,17 +101,19 @@ class IrActionsServer(models.Model):
                     'debug': log_info
                 }, indent=2, ensure_ascii=False)
             else:
-                local_ctx = {
+                # Use globals().copy() para incluir builtins e permitir closures
+                exec_globals = globals().copy()
+                exec_globals.update({
                     'record': rec,
                     'records': recs if recs else [rec],
                     'env': self.env,
                     'getattr': getattr,
                     'dir': dir,
                     'repr': repr,
-                }
+                })
                 try:
-                    exec(self.bitconn_python_payload_code, {}, local_ctx)
-                    result = local_ctx.get('result')
+                    exec(self.bitconn_python_payload_code, exec_globals)
+                    result = exec_globals.get('result')
                     if result is None:
                         # Remove objetos Odoo do log_info
                         for k, v in list(log_info.items()):
@@ -198,16 +200,18 @@ class IrActionsServer(models.Model):
             # Sempre processa como singleton igual ao preview
             if recs:
                 rec = recs[0]
-                local_ctx = {
+                # Use globals().copy() para incluir builtins e permitir closures
+                exec_globals = globals().copy()
+                exec_globals.update({
                     'record': rec,
                     'records': recs,
                     'env': self.env,
                     'getattr': getattr,
                     'dir': dir,
                     'repr': repr,
-                }
-                exec(code, {}, local_ctx)
-                body = local_ctx.get('result')
+                })
+                exec(code, exec_globals)
+                body = exec_globals.get('result')
                 if body is None:
                     body = {'error': 'O código Python não definiu a variável result ou retornou None.'}
             else:
