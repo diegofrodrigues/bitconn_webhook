@@ -3,6 +3,8 @@ from odoo.http import request
 import json
 import re
 import ast
+import logging
+import traceback
 
 
 class BitconnWebhookController(http.Controller):
@@ -43,6 +45,17 @@ class BitconnWebhookController(http.Controller):
         if not conf:
             return request.make_json_response({'ok': False, 'error': 'conf_not_found'}, status=404)
         if not self._validate(conf):
+            # Log masked headers for diagnostics when validation fails
+            try:
+                hdrs = dict(request.httprequest.headers)
+                # Mask sensitive headers
+                for k in list(hdrs.keys()):
+                    if k.lower() in ('authorization', 'webhook-key', 'webhook_key', 'x-webhook-key'):
+                        hdrs[k] = '***masked***'
+                _logger = __import__('logging').getLogger(__name__)
+                _logger.warning(f"[bitconn.webhook] auth failed for uuid={uuid_str}; headers={hdrs}")
+            except Exception:
+                pass
             return request.make_json_response({'ok': False, 'error': 'forbidden', 'reason': 'invalid_token'}, status=401)
 
         # Get HTTP method
@@ -69,11 +82,65 @@ class BitconnWebhookController(http.Controller):
                 'allowed_methods': allowed
             }, status=405)
         
+        # Read raw bytes first, then decode using charset if present.
         raw_body = ''
         try:
-            raw_body = request.httprequest.get_data(as_text=True) or ''
+            # Get raw bytes to attempt deterministic decoding
+            raw_bytes = request.httprequest.get_data() or b''
+        except Exception:
+            raw_bytes = b''
+
+        def _decode_bytes(bts):
+            # Try to detect charset from Content-Type header
+            try:
+                ctype = request.httprequest.headers.get('Content-Type', '') or ''
+                # format: 'application/json; charset=utf-8'
+                charset = None
+                if ';' in ctype:
+                    parts = [p.strip() for p in ctype.split(';')]
+                    for p in parts[1:]:
+                        if p.lower().startswith('charset='):
+                            charset = p.split('=', 1)[1].strip().strip('"')
+                            break
+                # If charset explicitly provided, try it first
+                if charset:
+                    try:
+                        return bts.decode(charset)
+                    except Exception:
+                        # fallthrough to other attempts
+                        pass
+                else:
+                    # No charset provided: assume UTF-8 (replace errors to avoid crashes)
+                    try:
+                        return bts.decode('utf-8')
+                    except Exception:
+                        try:
+                            return bts.decode('utf-8', errors='replace')
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            # Fallback: try latin-1 as last resort
+            try:
+                return bts.decode('latin-1')
+            except Exception:
+                return ''
+
+        try:
+            raw_body = _decode_bytes(raw_bytes) or ''
         except Exception:
             raw_body = ''
+
+        # If we couldn't decode anything but there are bytes, save a hex/snippet for debugging
+        if not raw_body and raw_bytes:
+            try:
+                # keep short to avoid huge logs/storage
+                snippet = raw_bytes[:200]
+                # attach as samples only if pin_request true later; for now keep raw_body empty
+                _logger = __import__('logging').getLogger(__name__)
+                _logger.debug(f"[bitconn.webhook] incoming raw bytes (len={len(raw_bytes)}): {snippet}")
+            except Exception:
+                pass
         
         # Don't save sample_request_payload here to avoid serialization conflicts
         # It will be saved asynchronously or manually by user
@@ -232,47 +299,118 @@ class BitconnWebhookController(http.Controller):
                 webhook_name = conf.name
                 _logger.warning(f"PIN REQUEST enabled but no raw_body for webhook {webhook_name}")
         
-        # Check if custom code execution is enabled (doesn't require model)
-        # If can_code is enabled and method is 'code', OR if no model provided and can_code is enabled
-        if conf.can_code and (method == 'code' or (not model and conf.pin_request) or (not model and conf.python_code)):
-            res = conf._exec_code(
-                raw_body, 
-                request_headers=dict(request.httprequest.headers),
-                request_method=request.httprequest.method
-            )
+        # Derive an execution-bound conf that uses the webhook's configured user
+        # (avoid using the HTTP/request environment user). Do not use sudo here.
+        try:
+            conf_exec = conf.with_env(conf.env(user=conf.user_id.id)) if conf and conf.user_id else conf
+        except Exception:
+            conf_exec = conf
+
+        # Debug: log env uids to diagnose intermittent ACL issues
+        try:
+            _logger = logging.getLogger(__name__)
+            req_uid = getattr(request.env, 'uid', None)
+            conf_uid = getattr(conf.env, 'uid', None) if conf else None
+            conf_exec_uid = getattr(conf_exec.env, 'uid', None) if conf_exec else None
+            _logger.info(f"[bitconn.webhook.receive] request.env.uid={req_uid} conf.env.uid={conf_uid} conf_exec.env.uid={conf_exec_uid} method={method} model={model}")
+        except Exception:
+            pass
+
+        # Temporarily override global odoo.http.request so any code called below
+        # that reads `odoo.http.request.env` sees `conf_exec.env` (the webhook user).
+        try:
+            import odoo.http as _odoo_http
+            _orig_http_request = getattr(_odoo_http, 'request', None)
+        except Exception:
+            _odoo_http = None
+            _orig_http_request = None
+
+        # Also capture the local request.env so we can temporarily override it
+        _orig_local_request_env = getattr(request, 'env', None)
+
+        # Proxy class that exposes env and basic attributes used by other code
+        class _ReqGlobalProxy(object):
+            def __init__(self, orig, env):
+                self._orig = orig
+                self.env = env
+                # keep httprequest if present for code that accesses it
+                self.httprequest = getattr(orig, 'httprequest', None) if orig is not None else None
+                self.params = getattr(orig, 'params', {}) if orig is not None else {}
+                self.jsonrequest = getattr(orig, 'jsonrequest', None) if orig is not None else None
+
+        try:
+            # Override local request.env so any code using the `request` object directly
+            # will see the webhook user's env; restore in finally.
+            try:
+                request.env = conf_exec.env
+            except Exception:
+                pass
+
+            if _odoo_http is not None:
+                try:
+                    _odoo_http.request = _ReqGlobalProxy(_orig_http_request, conf_exec.env)
+                except Exception:
+                    _odoo_http = None
+
+            # Check if custom code execution is enabled (doesn't require model)
+            # If can_code is enabled and method is 'code', OR if no model provided and can_code is enabled
+            if conf_exec.can_code and (method == 'code' or (not model and conf_exec.pin_request) or (not model and conf_exec.python_code)):
+                try:
+                    res = conf_exec._exec_code(
+                        raw_body,
+                        request_headers=dict(request.httprequest.headers),
+                        request_method=request.httprequest.method
+                    )
+                except Exception:
+                    # Log full traceback and return it in JSON for debugging
+                    _logger = logging.getLogger(__name__)
+                    tb = traceback.format_exc()
+                    try:
+                        _logger.error(f"[bitconn.webhook] _exec_code exception for webhook id={conf.id} user_id={getattr(conf, 'user_id', None)}:\n{tb}")
+                    except Exception:
+                        _logger.error("[bitconn.webhook] _exec_code exception but failed to log details")
+                    return request.make_json_response({'ok': False, 'error': 'internal_error', 'traceback': tb}, status=500)
+                status = 200 if res.get('ok') else 400
+
+                # Save sample request if pinned
+                save_sample_async_if_pinned()
+
+                return request.make_json_response(res, status=status)
+
+            # For other methods, model is required
+            if not model:
+                return request.make_json_response({'ok': False, 'error': 'invalid_payload', 'reason': 'missing_model'}, status=400)
+
+            if method == 'create':
+                res = conf_exec._exec_create(model, values)
+            elif method == 'write':
+                res = conf_exec._exec_write(model, domain, values)
+            elif method == 'unlink':
+                res = conf_exec._exec_unlink(model, domain)
+            elif method == 'read':
+                res = conf_exec._exec_read(model, ids, fields=fields)
+            elif method == 'search':
+                res = conf_exec._exec_search(model, domain, fields=fields, limit=limit, offset=offset, order=order)
+            else:
+                res = {'ok': False, 'error': 'invalid_method'}
+
             status = 200 if res.get('ok') else 400
-            
-            # Save sample request if pinned
+            if parse_error and res.get('ok'):
+                # Anexar aviso de parsing tolerante, sem quebrar sucesso principal
+                res['warning'] = parse_error
+
+            # Save sample request if pinned (for all operations)
             save_sample_async_if_pinned()
-            
+
             return request.make_json_response(res, status=status)
 
-        # For other methods, model is required
-        if not model:
-            return request.make_json_response({'ok': False, 'error': 'invalid_payload', 'reason': 'missing_model'}, status=400)
-
-        if method == 'create':
-            res = conf._exec_create(model, values)
-        elif method == 'write':
-            res = conf._exec_write(model, domain, values)
-        elif method == 'unlink':
-            res = conf._exec_unlink(model, domain)
-        elif method == 'read':
-            res = conf._exec_read(model, ids, fields=fields)
-        elif method == 'search':
-            res = conf._exec_search(model, domain, fields=fields, limit=limit, offset=offset, order=order)
-        else:
-            res = {'ok': False, 'error': 'invalid_method'}
-
-        status = 200 if res.get('ok') else 400
-        if parse_error and res.get('ok'):
-            # Anexar aviso de parsing tolerante, sem quebrar sucesso principal
-            res['warning'] = parse_error
-        
-        # Save sample request if pinned (for all operations)
-        save_sample_async_if_pinned()
-        
-        return request.make_json_response(res, status=status)
+        finally:
+            # restore original global request to avoid side-effects
+            try:
+                if _odoo_http is not None:
+                    _odoo_http.request = _orig_http_request
+            except Exception:
+                pass
 
     @http.route(['/bitconn/webhook/<string:webhook_uuid>/schema'], type='http', auth='public', methods=['GET'], csrf=False)
     def webhook_schema(self, webhook_uuid, **kw):
