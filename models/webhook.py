@@ -89,6 +89,26 @@ class BitconnWebhook(models.Model):
         readonly=True,
         help='Stores the latest HTTP status and response body from a test send.'
     )
+    enable_test_outbound = fields.Boolean(
+        string='Enable Test Outbound',
+        default=False,
+        help='Enable test mode to test your outbound webhook configuration'
+    )
+    # Server Actions linked to this webhook (allow inline management from Outbound tab)
+    server_action_ids = fields.One2many(
+        'ir.actions.server',
+        'bitconn_webhook_id',
+        string='Server Actions',
+        help='Server Actions configured to send via this webhook (Action Type: Bitconn Webhook)'
+    )
+    # Automation Rules linked to this webhook (Automated Actions)
+    automation_ids = fields.One2many(
+        'base.automation',
+        'bitconn_webhook_id',
+        string='Automation Rules',
+        help='Automation rules that will trigger using this webhook',
+        context={'active_test': False}
+    )
     # Help examples (JSON with common payloads)
     examples_help = fields.Text(
         string='Examples Help (JSON)',
@@ -1404,10 +1424,43 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
                 'webhook_url': rec.webhook_url,
                 'secret_key': rec.secret_key,
                 'outbound_headers': rec.outbound_headers,
+                'outbound_enabled': rec.outbound_enabled,
             }
             for rec in self
         }
         res = super().write(vals)
+        
+        # Archive/Unarchive automation rules when outbound is disabled/enabled
+        if 'outbound_enabled' in vals:
+            for rec in self:
+                original_state = originals.get(rec.id, {}).get('outbound_enabled')
+                
+                if not vals['outbound_enabled'] and original_state:
+                    # Outbound was enabled and now is disabled, archive automation rules
+                    active_automations = rec.with_context(active_test=False).automation_ids.filtered(lambda a: a.active)
+                    if active_automations:
+                        active_automations.write({'active': False})
+                        _logger.info(
+                            f"Webhook '{rec.name}' (ID: {rec.id}): Outbound disabled, "
+                            f"archived {len(active_automations)} automation rule(s)"
+                        )
+                        rec.message_post(
+                            body=_("Outbound disabled: %d automation rule(s) archived") % len(active_automations)
+                        )
+                
+                elif vals['outbound_enabled'] and not original_state:
+                    # Outbound was disabled and now is enabled, unarchive automation rules
+                    archived_automations = rec.with_context(active_test=False).automation_ids.filtered(lambda a: not a.active)
+                    if archived_automations:
+                        archived_automations.write({'active': True})
+                        _logger.info(
+                            f"Webhook '{rec.name}' (ID: {rec.id}): Outbound enabled, "
+                            f"unarchived {len(archived_automations)} automation rule(s)"
+                        )
+                        rec.message_post(
+                            body=_("Outbound enabled: %d automation rule(s) unarchived") % len(archived_automations)
+                        )
+        
         to_log = track_fields.intersection(vals.keys())
         # If uuid changed, the computed URL changes too; force log of masked URL
         if 'webhook_uuid' in vals:

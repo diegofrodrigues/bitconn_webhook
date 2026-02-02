@@ -83,9 +83,17 @@
             </group>
             <notebook>
               <page string="Inbound">
+                <!-- Warning message when can_code is True -->
+                <group invisible="can_code == False">
+                  <div class="alert alert-warning" role="status">
+                    <strong>Warning:</strong> Custom code execution is a powerful feature. Only enable for trusted sources.
+                    The code will run with the configured user's permissions and full access to all models.
+                  </div>
+                </group>
+                
                 <group>
                   <group col="2" class="w-100">
-                    <field name="allowed_model_ids" widget="many2many_tags"/>
+                    <field name="allowed_model_ids" widget="many2many_tags" invisible="can_code == True"/>
                     <field name="inbound_auth_type" widget="radio"/>
                   </group>
                   <group col="2" class="w-100">
@@ -97,26 +105,12 @@
                 <group invisible="inbound_auth_type == 'none'">
                     <button name="action_regenerate_credentials" string="Regenerate Credentials" type="object" icon="fa-refresh" class="btn-link d-block mx-auto" colspan="2"/>
                 </group>
-                <group invisible="inbound_auth_type != 'none'">
-                  <div class="alert alert-danger" role="alert">
-                    <strong>⚠️ Security Warning:</strong> This webhook is configured for public access without authentication.
-                    Anyone with the webhook URL can send requests. Only use this for trusted sources or public endpoints.
-                  </div>
-                </group>
-              </page>
-
-              <page string="Code" invisible="can_code == False">
-                <group>
-                  <div class="alert alert-warning" role="status">
-                    <strong>Warning:</strong> Custom code execution is a powerful feature. Only enable for trusted sources.
-                    The code will run with the configured user's permissions and full access to all models.
-                  </div>
-                </group>
                 
-                <group>
+                <!-- Python Code Section (visible only when can_code is True) -->
+                <group invisible="can_code == False">
                   <separator string="HTTP Methods"/>
                 </group>
-                <group col="2">
+                <group col="2" invisible="can_code == False">
                   <field name="inbound_allowed_methods" widget="radio"/>
                   <group colspan="2" invisible="inbound_allowed_methods != 'CUSTOM'">
                     <group>
@@ -131,7 +125,7 @@
                   </group>
                 </group>
                 
-                <group>
+                <group invisible="can_code == False">
                   <separator string="Python Code"/>
                   <div class="text-muted">
                     Write your Python code below. Set <code>result</code> variable to return custom response.
@@ -139,43 +133,43 @@
                     <strong>💡 Tip:</strong> See the <strong>Help</strong> tab for complete documentation and available variables.
                   </div>
                 </group>
-                <group>
+                <group invisible="can_code == False">
                   <field name="python_code" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'lineNumbers': true}" placeholder="# Available variables: request, env, user_id, json&#10;# Set result variable to return response&#10;&#10;# Example: Create a partner from webhook data&#10;data = request['json']&#10;partner = env['res.partner'].create({&#10;    'name': data.get('name'),&#10;    'email': data.get('email')&#10;})&#10;result = {'ok': True, 'partner_id': partner.id, 'name': partner.name}"/>
                 </group>
                 
-                <group>
+                <group invisible="can_code == False">
                   <separator string="Request Monitor (Real-time)"/>
                   <div class="text-muted">
                     These fields update automatically when a webhook request is received while you're on this tab.
                   </div>
                 </group>
-                <group col="2" class="o_group o_inner_group">
+                <group col="2" class="o_group o_inner_group" invisible="can_code == False">
                   <group class="w-100">
-                    <label for="last_request_input" string="Last Request Input"/>
+                    <label for="last_request_input" string="Last Request Input" class="o_form_label"/>
                     <field name="last_request_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                     <field name="last_request_date" readonly="1"/>
                   </group>
                   <group class="w-100">
-                    <label for="last_request_output" string="Last Request Output"/>
+                    <label for="last_request_output" string="Last Request Output" class="o_form_label"/>
                     <field name="last_request_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                   </group>
                 </group>
-                <group>
+                <group invisible="can_code == False">
                   <div class="d-flex align-items-center">
                     <button name="action_refresh_monitor" type="object" string="Refresh Monitor" class="btn-primary me-2" icon="fa-refresh"/>
                     <button name="action_clear_request_input" type="object" string="Clear Monitor" class="btn-secondary" icon="fa-eraser"/>
                   </div>
                 </group>
                 
-                <group>
+                <group invisible="can_code == False">
                   <separator string="Test Code"/>
                 </group>
-                <group col="2">
+                <group col="2" invisible="can_code == False">
                   <group class="w-100" colspan="2">
                     <field name="enable_test"/>
                   </group>
                   <group class="w-100" colspan="2" invisible="enable_test == False or pin_request == True">
-                    <label for="test_input" string="Test Input (Request Body)"/>
+                    <label for="test_input" string="Test Input (Request Body)" class="o_form_label"/>
                     <field name="test_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
                   </group>
                   <group class="w-100" colspan="2" invisible="enable_test == False">
@@ -185,15 +179,15 @@
                     </div>
                   </group>
                   <group class="w-100" colspan="2" invisible="enable_test == False">
-                    <label for="test_output" string="Test Output (Result Variable)"/>
+                    <label for="test_output" string="Test Output (Result Variable)" class="o_form_label"/>
                     <field name="test_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                   </group>
                 </group>
                 
-                <group>
+                <group invisible="can_code == False">
                   <separator string="Sample Request (Latest Received)"/>
                 </group>
-                <group col="2">
+                <group col="2" invisible="can_code == False">
                   <group class="w-100" colspan="2">
                     <field name="pin_request"/>
                     <div class="text-muted" invisible="pin_request == False">
@@ -212,23 +206,96 @@
                     </div>
                   </group>
                 </group>
+                
+                <group invisible="inbound_auth_type != 'none'">
+                  <div class="alert alert-danger" role="alert">
+                    <strong>⚠️ Security Warning:</strong> This webhook is configured for public access without authentication.
+                    Anyone with the webhook URL can send requests. Only use this for trusted sources or public endpoints.
+                  </div>
+                </group>
               </page>
 
               <page string="Outbound">
                 <group col="2">
-                  <field name="outbound_enabled"/>
-                  <field name="outbound_method"/>
+                  <group>
+                    <field name="outbound_enabled"/>
+                  </group>
+                  <group>
+                    <field name="outbound_method"/>
+                  </group>
+                </group>
+                <group col="2">
                   <field name="outbound_url" colspan="2"/>
-                  <field name="outbound_headers" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
+                </group>
+                <group col="2">
+                    <separator string="Headers"/>
+                    <field name="outbound_headers" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
+                    <!-- Automation Rules placed right after Outbound Headers -->
+                    <separator string="Automation Rules"/>
+                    <field name="automation_ids" nolabel="1" widget="one2many" class="o_base_automation_actions_field"
+                       context="{'default_trigger': 'on_webhook', 'active_test': False}">
+                      <kanban class="o_base_automation_kanban" records_draggable="false" quick_create="false" group_create="false">
+                        <field name="active"/>
+                        <templates>
+                          <t t-name="card" class="flex-md-row">
+                            <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active" />
+                            <div class="d-flex align-items-center w-100 w-md-25 o_automation_base_info">
+                              <div class="d-flex flex-column">
+                                <field name="name" class="fs-2 fw-bold"/>
+                                <field name="model_id" invisible="context.get('default_model_id')"/>
+                                <div class="d-flex align-items-center gap-1 text-nowrap" invisible="trigger in ['on_time', 'on_time_created', 'on_time_updated']">
+                                  <field name="trigger"/>
+                                  <field name="on_change_field_ids" invisible="trigger != 'on_change'" class="my-1" />
+                                  <field name="trg_selection_field_id" invisible="trigger not in ['on_state_set', 'on_priority_set']" class="o_tag o_tag_color_0 rounded-pill p-1 px-2" />
+                                  <field name="trg_field_ref" invisible="trigger not in ['on_stage_set', 'on_tag_set']" class="o_tag o_tag_color_0 rounded-pill p-1 px-2" />
+                                  <field name="trigger_field_ids" invisible="trigger not in ['on_create_or_write']" class="my-1" />
+                                </div>
+                              </div>
+                            </div>
+                            <div class="d-none d-md-flex flex-grow-1 align-items-center gap-3 o_automation_actions" data-name="more-info">
+                              <i class="fa fa-2x fa-arrow-right text-primary" title="Actions" />
+                              <field name="action_server_ids" widget="base_automation_actions_one2many" class="align-self-center w-100 me-md-3" />
+                            </div>
+                          </t>
+                        </templates>
+                      </kanban>
+                    </field>
                   <separator string="Test"/>
-                  <field name="outbound_test_body" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2"/>
+                  <group class="w-100" colspan="2">
+                    <field name="enable_test_outbound"/>
+                  </group>
+                  <group class="w-100" colspan="2" invisible="enable_test_outbound == False">
+                    <label for="outbound_test_body" string="Test Body (JSON)" class="o_form_label"/>
+                    <field name="outbound_test_body" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
+                  </group>
+                  <group class="w-100" colspan="2" invisible="enable_test_outbound == False">
                     <div class="d-flex align-items-center">
                       <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary me-2" icon="fa-paper-plane"/>
                       <button name="action_clear_outbound_test_result" type="object" string="Clear Test Result" class="btn-secondary" icon="fa-eraser"/>
                     </div>
-                  <field name="outbound_test_result" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="0" colspan="2"/>
+                  </group>
+                  <group class="w-100" colspan="2" invisible="enable_test_outbound == False">
+                    <label for="outbound_test_result" string="Test Result" class="o_form_label"/>
+                    <field name="outbound_test_result" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                  </group>
+                  <!-- Server Actions list removed to avoid duplication with Automation Rules -->
                 </group>
               </page>
+              <page string="Terminal">
+                <group>
+                  <div class="o_bitconn_terminal_container" colspan="2">
+                    <div id="bitconn_terminal_banner" class="alert alert-warning" style="display:none;margin-bottom:8px;" role="alert">Session expired. Click <strong>Open Shell</strong> to start a new session.</div>
+                    <div id="bitconn_terminal" class="xterm"></div>
+                    <div class="d-flex mt-2">
+                      <a href="#" role="button" class="btn btn-success o_bitconn_terminal_connect">Connect</a>
+                      <a href="#" role="button" class="btn btn-primary ms-2 o_bitconn_terminal_shell">Shell</a>
+                      <a href="#" role="button" class="btn btn-danger ms-2 o_bitconn_terminal_disconnect" style="display:none;">Disconnect</a>
+                      <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_clear">Clear</a>
+                    </div>
+                  </div>
+                </group>
+              </page>
+
               <page string="Help">
                 <group>
                   <separator string="Python Code - Available Variables"/>
