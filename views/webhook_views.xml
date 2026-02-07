@@ -269,6 +269,7 @@
                       <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_shell"><i class="fa fa-code me-1"/>Shell</a>
                       <a href="#" role="button" class="btn btn-danger ms-2 o_bitconn_terminal_disconnect" style="display:none;">Disconnect</a>
                       <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_clear"><i class="fa fa-eraser me-1"/>Clear</a>
+                      <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_fullscreen"><i class="fa fa-expand me-1"/>Fullscreen</a>
                     </div>
                   </div>
                 </group>

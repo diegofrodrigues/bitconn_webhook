@@ -21,12 +21,10 @@
 
         var Terminal = window.Terminal || window.XTerm || null;
         if (!Terminal) {
-            console.warn('xterm not available');
+            console.warn('[bitconn_terminal] xterm not available');
             termEl.innerText = 'xterm.js not loaded';
             return;
         }
-
-        console.debug('[bitconn_terminal] initOnce for container', container);
         var term = new Terminal({cursorBlink: true});
         
         term.open(termEl);
@@ -47,14 +45,21 @@
             }
         } catch (e) {}
         
-        // Ensure fit runs after layout settles
+        // Ensure fit runs after layout settles, then show welcome
+        var _welcomeShown = false;
+        function fitAndWelcome() {
+            try { if (fitAddon && fitAddon.fit) { fitAddon.fit(); } } catch(e) {}
+            if (!_welcomeShown) {
+                _welcomeShown = true;
+                showWelcome();
+            }
+        }
         try {
-            setTimeout(function() {
-                if (fitAddon && fitAddon.fit) {
-                    try { fitAddon.fit(); } catch(e) {}
-                }
-            }, 80);
-        } catch(e) {}
+            setTimeout(fitAndWelcome, 80);
+        } catch(e) {
+            showWelcome();
+            _welcomeShown = true;
+        }
         
         // Configure xterm element
         var xtermEl = term.element || (term._core && term._core.element) || termEl;
@@ -87,10 +92,14 @@
 
         function setButtonsState(running) {
             var connectBtn = container.querySelector('.o_bitconn_terminal_connect');
+            var shellBtn = container.querySelector('.o_bitconn_terminal_shell');
             var disconnectBtn = container.querySelector('.o_bitconn_terminal_disconnect');
             
             if (connectBtn) {
                 connectBtn.style.display = running ? 'none' : '';
+            }
+            if (shellBtn) {
+                shellBtn.style.display = running ? 'none' : '';
             }
             if (disconnectBtn) {
                 disconnectBtn.style.display = running ? '' : 'none';
@@ -119,23 +128,12 @@
             }
         }
 
-        showWelcome();
+        // showWelcome is called after fitAddon runs (see setTimeout above)
 
         function startSession(shellMode) {
             if (ws) { return; }
-            shellMode = shellMode || 'bash'; // 'bash' or 'odoo'
-            console.debug('[bitconn_terminal] Starting WebSocket session, mode:', shellMode);
+            shellMode = shellMode || 'bash';
             
-            // Use Odoo RPC to get token
-            var rpcUrl = '/web/dataset/call_kw/bitconn.webhook/get_ws_token';
-            var payload = {
-                model: 'res.users',
-                method: 'call',
-                args: [],
-                kwargs: {}
-            };
-            
-            // Try direct fetch with proper headers
             fetch('/bitconn_webhook/terminal/get_ws_token', {
                 method: 'POST',
                 headers: {
@@ -151,18 +149,13 @@
                 })
             })
             .then(function(r) { 
-                console.log('[bitconn_terminal] Response status:', r.status, r.statusText);
                 if (!r.ok) {
                     throw new Error('HTTP ' + r.status);
                 }
                 return r.json(); 
             })
             .then(function(response) {
-                console.log('[bitconn_terminal] Got response:', response);
-                
-                // Odoo wraps JSON responses in {result: ...}
                 var data = response.result || response;
-                console.log('[bitconn_terminal] Extracted data:', data);
                 
                 if (data.error) {
                     term.writeln('\r\n[ERROR] ' + data.error);
@@ -172,8 +165,6 @@
                 
                 wsToken = data.token;
                 wsUrl = data.ws_url;
-                
-                console.log('[bitconn_terminal] Parsed token:', wsToken, 'url:', wsUrl);
                 
                 if (!wsToken || !wsUrl) {
                     console.error('[bitconn_terminal] Invalid response - missing token or ws_url');
@@ -192,20 +183,17 @@
 
         function connectWebSocket() {
             if (!wsUrl || !wsToken) { 
-                console.error('[bitconn_terminal] Missing wsUrl or wsToken', {wsUrl, wsToken});
+                console.error('[bitconn_terminal] Missing wsUrl or wsToken');
                 return; 
             }
             
             var fullUrl = wsUrl + '?token=' + encodeURIComponent(wsToken);
-            console.log('[bitconn_terminal] Connecting to WebSocket:', fullUrl);
             
             try {
                 ws = new WebSocket(fullUrl);
                 ws.binaryType = 'arraybuffer';
-                console.log('[bitconn_terminal] WebSocket created, readyState:', ws.readyState);
                 
                 ws.onopen = function() {
-                    console.log('[bitconn_terminal] WebSocket connected');
                     hideBanner();
                     setButtonsState(true);
                     
@@ -235,7 +223,6 @@
                 };
                 
                 ws.onclose = function(event) {
-                    console.log('[bitconn_terminal] WebSocket closed', event.code, event.reason);
                     
                     // Reset terminal to initial state
                     resetTerminal();
@@ -254,15 +241,11 @@
         }
 
         function sendInput(data) {
-            console.debug('[bitconn_terminal] sendInput called, ws state:', ws ? ws.readyState : 'null');
             if (!ws || ws.readyState !== WebSocket.OPEN) {
-                console.warn('[bitconn_terminal] WebSocket not ready, state:', ws ? ws.readyState : 'null');
                 return;
             }
             try {
-                // Send as binary (UTF-8 encoded bytes)
                 var bytes = new TextEncoder().encode(data);
-                console.debug('[bitconn_terminal] Sending', bytes.length, 'bytes to WebSocket');
                 ws.send(bytes);
             } catch(e) {
                 console.error('[bitconn_terminal] Failed to send input', e);
@@ -274,13 +257,11 @@
             try {
                 var rows = term.rows || 24;
                 var cols = term.cols || 80;
-                // Send as JSON control message
                 ws.send(JSON.stringify({
                     type: 'resize',
                     rows: rows,
                     cols: cols
                 }));
-                console.debug('[bitconn_terminal] Sent resize', rows, cols);
             } catch(e) {}
         }
 
@@ -300,7 +281,6 @@
         }
         
         function resetTerminal() {
-            console.log('[bitconn_terminal] Resetting terminal to initial state');
             closeSession();
             term.clear();
             showWelcome();
@@ -309,7 +289,6 @@
 
         // Function to register input handlers (called after WebSocket connects)
         function registerInputHandlers() {
-            console.debug('[bitconn_terminal] Registering input handlers');
             
             // Dispose previous handler to avoid duplicates on reconnect
             if (_onDataDisposable && typeof _onDataDisposable.dispose === 'function') {
@@ -320,10 +299,8 @@
             // Attach xterm input handler
             if (typeof term.onData === 'function') {
                 _onDataDisposable = term.onData(function(data) {
-                    console.debug('[bitconn_terminal] onData received:', data.length, 'bytes');
                     sendInput(data);
                 });
-                console.debug('[bitconn_terminal] onData handler registered');
             } else if (typeof term.onKey === 'function') {
                 _onDataDisposable = term.onKey(function(ev) {
                     var dom = ev.domEvent || {};
@@ -337,7 +314,6 @@
                     else if (ev.key && ev.key.length === 1) { seq = ev.key; }
                     if (seq) { sendInput(seq); }
                 });
-                console.debug('[bitconn_terminal] onKey handler registered');
             }
         }
 
@@ -352,24 +328,18 @@
 
         // Buttons
         var connectBtn = container.querySelector('.o_bitconn_terminal_connect');
-        console.debug('[bitconn_terminal] Connect button found:', !!connectBtn);
         if (connectBtn) {
             connectBtn.addEventListener('click', function(ev) {
-                console.debug('[bitconn_terminal] Connect (bash) clicked');
                 ev.preventDefault();
                 term.clear();
                 startSession('bash');
                 try { term.focus(); } catch(e) {}
             });
-        } else {
-            console.error('[bitconn_terminal] Connect button not found!');
         }
         
         var shellBtn = container.querySelector('.o_bitconn_terminal_shell');
-        console.debug('[bitconn_terminal] Shell button found:', !!shellBtn);
         if (shellBtn) {
             shellBtn.addEventListener('click', function(ev) {
-                console.debug('[bitconn_terminal] Shell (odoo) clicked');
                 ev.preventDefault();
                 term.clear();
                 startSession('odoo');
@@ -378,20 +348,16 @@
         }
         
         var disconnectBtn = container.querySelector('.o_bitconn_terminal_disconnect');
-        console.debug('[bitconn_terminal] Disconnect button found:', !!disconnectBtn);
         if (disconnectBtn) {
             disconnectBtn.addEventListener('click', function(ev) {
-                console.debug('[bitconn_terminal] Disconnect clicked');
                 ev.preventDefault();
                 resetTerminal();
             });
         }
         
         var clearBtn = container.querySelector('.o_bitconn_terminal_clear');
-        console.debug('[bitconn_terminal] Clear button found:', !!clearBtn);
         if (clearBtn) {
             clearBtn.addEventListener('click', function(ev) {
-                console.debug('[bitconn_terminal] Clear clicked');
                 ev.preventDefault();
                 if (!ws) {
                     term.clear();
@@ -402,6 +368,55 @@
             });
         }
 
+        // Fullscreen toggle
+        var fullscreenBtn = container.querySelector('.o_bitconn_terminal_fullscreen');
+        var _isFullscreen = false;
+        var _initialRows = term.rows || 24;
+        var _initialCols = term.cols || 80;
+        var _savedContainerHeight = container.offsetHeight;
+        function toggleFullscreen() {
+            _isFullscreen = !_isFullscreen;
+            if (_isFullscreen) {
+                _savedContainerHeight = container.offsetHeight;
+                container.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;z-index:10000;background:#000;padding:12px;box-sizing:border-box;display:flex;flex-direction:column;';
+                termEl.style.cssText = 'flex:1;overflow:hidden;';
+                if (fullscreenBtn) {
+                    fullscreenBtn.querySelector('i').className = 'fa fa-compress me-1';
+                    fullscreenBtn.childNodes[1].textContent = 'Exit';
+                }
+            } else {
+                container.style.cssText = '';
+                termEl.style.cssText = '';
+                // Force terminal back to initial size
+                try { term.resize(_initialCols, _initialRows); } catch(e) {}
+                if (fullscreenBtn) {
+                    fullscreenBtn.querySelector('i').className = 'fa fa-expand me-1';
+                    fullscreenBtn.childNodes[1].textContent = 'Fullscreen';
+                }
+            }
+            setTimeout(function() {
+                if (_isFullscreen) {
+                    try { if (fitAddon && fitAddon.fit) { fitAddon.fit(); } } catch(e) {}
+                } else {
+                    try { term.resize(_initialCols, _initialRows); } catch(e) {}
+                }
+                sendResize();
+                try { term.focus(); } catch(e) {}
+            }, 100);
+        }
+        if (fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', function(ev) {
+                ev.preventDefault();
+                toggleFullscreen();
+            });
+        }
+        // Exit fullscreen with Escape
+        document.addEventListener('keydown', function(ev) {
+            if (ev.key === 'Escape' && _isFullscreen) {
+                toggleFullscreen();
+            }
+        });
+
         // Resize handling
         window.addEventListener('resize', function() {
             try {
@@ -410,12 +425,16 @@
             } catch(e) {}
         });
 
-        // MutationObserver for container visibility
+        // MutationObserver for container visibility (tab switch)
         var mo = new MutationObserver(function() {
             try {
                 if (container.offsetParent !== null) {
                     if (fitAddon && fitAddon.fit) { fitAddon.fit(); }
                     sendResize();
+                    if (!_welcomeShown) {
+                        _welcomeShown = true;
+                        showWelcome();
+                    }
                     try { term.focus(); } catch(e) {}
                 }
             } catch(e) {}
@@ -430,7 +449,6 @@
     function waitForContainer() {
         var selector = '.o_bitconn_terminal_container';
         var found = document.querySelectorAll(selector);
-        console.debug('[bitconn_terminal] Searching for container, found:', found.length);
         if (found && found.length) {
             found.forEach(function(c) {
                 // Re-init if DOM node was replaced by Odoo (detached from document)
@@ -445,7 +463,6 @@
     }
 
     // Start
-    console.debug('[bitconn_terminal] Script loaded, readyState:', document.readyState);
     if (document.readyState === 'complete' || document.readyState === 'interactive') {
         waitForContainer();
     } else {
