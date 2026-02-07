@@ -71,6 +71,7 @@
         var wsToken = null;
         var wsUrl = null;
         var bannerEl = container.querySelector('#bitconn_terminal_banner');
+        var _onDataDisposable = null; // track onData handler for cleanup
 
         function showBanner(msg) {
             try {
@@ -109,7 +110,6 @@
                 banner += 'Welcome to the terminal\r\n\r\n';
                 banner += 'Use the \x1b[1;34mConnect\x1b[0m button to connect to bash terminal\r\n';
                 banner += 'Use the \x1b[1;34mShell\x1b[0m button to connect to Odoo shell\r\n\r\n';
-                banner += '[\x1b[1;34mbitconn\x1b[0m]:~$ ';
                 
                 try { term.writeln(''); } catch (e) {}
                 term.write(banner);
@@ -285,11 +285,17 @@
         }
 
         function closeSession() {
+            // Dispose input handler to prevent ghost writes
+            if (_onDataDisposable && typeof _onDataDisposable.dispose === 'function') {
+                _onDataDisposable.dispose();
+                _onDataDisposable = null;
+            }
             if (ws) {
                 try { ws.close(); } catch(e) {}
                 ws = null;
             }
             wsToken = null;
+            wsUrl = null;
             setButtonsState(false);
         }
         
@@ -305,15 +311,21 @@
         function registerInputHandlers() {
             console.debug('[bitconn_terminal] Registering input handlers');
             
+            // Dispose previous handler to avoid duplicates on reconnect
+            if (_onDataDisposable && typeof _onDataDisposable.dispose === 'function') {
+                _onDataDisposable.dispose();
+                _onDataDisposable = null;
+            }
+            
             // Attach xterm input handler
             if (typeof term.onData === 'function') {
-                term.onData(function(data) {
+                _onDataDisposable = term.onData(function(data) {
                     console.debug('[bitconn_terminal] onData received:', data.length, 'bytes');
                     sendInput(data);
                 });
                 console.debug('[bitconn_terminal] onData handler registered');
             } else if (typeof term.onKey === 'function') {
-                term.onKey(function(ev) {
+                _onDataDisposable = term.onKey(function(ev) {
                     var dom = ev.domEvent || {};
                     var seq = '';
                     if (dom.key === 'Enter') { seq = '\r'; }
@@ -414,17 +426,22 @@
         window.addEventListener('beforeunload', function() { closeSession(); });
     }
 
-    // Poll for terminal container
+    // Poll for terminal container — re-check periodically to handle SPA re-renders
     function waitForContainer() {
         var selector = '.o_bitconn_terminal_container';
         var found = document.querySelectorAll(selector);
         console.debug('[bitconn_terminal] Searching for container, found:', found.length);
         if (found && found.length) {
-            console.debug('[bitconn_terminal] Initializing', found.length, 'container(s)');
-            found.forEach(function(c) { initOnce(c); });
-            return;
+            found.forEach(function(c) {
+                // Re-init if DOM node was replaced by Odoo (detached from document)
+                if (c._bitconn_init && !document.body.contains(c._bitconn_ref || c)) {
+                    c._bitconn_init = false;
+                }
+                initOnce(c);
+                c._bitconn_ref = c;
+            });
         }
-        setTimeout(waitForContainer, 500);
+        setTimeout(waitForContainer, 1000);
     }
 
     // Start

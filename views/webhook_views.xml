@@ -265,10 +265,10 @@
                     <div id="bitconn_terminal_banner" class="alert alert-warning" style="display:none;margin-bottom:8px;" role="alert">Session expired. Click <strong>Open Shell</strong> to start a new session.</div>
                     <div id="bitconn_terminal" class="xterm"></div>
                     <div class="d-flex mt-2">
-                      <a href="#" role="button" class="btn btn-success o_bitconn_terminal_connect">Connect</a>
-                      <a href="#" role="button" class="btn btn-primary ms-2 o_bitconn_terminal_shell">Shell</a>
+                      <a href="#" role="button" class="btn btn-secondary o_bitconn_terminal_connect"><i class="fa fa-terminal me-1"/>Connect</a>
+                      <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_shell"><i class="fa fa-code me-1"/>Shell</a>
                       <a href="#" role="button" class="btn btn-danger ms-2 o_bitconn_terminal_disconnect" style="display:none;">Disconnect</a>
-                      <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_clear">Clear</a>
+                      <a href="#" role="button" class="btn btn-secondary ms-2 o_bitconn_terminal_clear"><i class="fa fa-eraser me-1"/>Clear</a>
                     </div>
                   </div>
                 </group>

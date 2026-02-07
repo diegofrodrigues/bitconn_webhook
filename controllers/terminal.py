@@ -210,12 +210,15 @@ async def _handle_websocket(websocket, path=None):
                 if config_file:
                     cmd.extend(['-c', config_file])
         else:
-            # Bash shell
-            cmd = ['/bin/bash', '-l']
+            # Bash shell – suppress login banners and user rc files;
+            # a custom PS1 is injected via the environment instead.
+            cmd = ['/bin/bash', '--norc','--noprofile' ]
         
         env = os.environ.copy()
         env['TERM'] = 'xterm-256color'
         env.setdefault('COLORTERM', 'truecolor')
+        # Clean prompt matching the welcome banner style
+        env['PS1'] = '\\[\\033[1;34m\\][bitconn]\\[\\033[0m\\]:\\w$ '
         
         proc = subprocess.Popen(
             cmd, cwd=working_dir, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
