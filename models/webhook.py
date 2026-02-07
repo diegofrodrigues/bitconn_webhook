@@ -194,6 +194,32 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
         readonly=True,
         help='Latest request payload received by this webhook. Use this to pin/save an example for testing.'
     )
+
+    def action_create_server_action(self):
+        """Open a modal to create a new `base.automation` pre-filled for this webhook.
+        Uses the Bitconn primary view so that server actions created inside it
+        automatically default to state='bitconn_webhook'.
+        The user can still choose trigger, filters, etc.
+        """
+        self.ensure_one()
+        view = self.env.ref(
+            'bitconn_webhook.view_base_automation_form_bitconn',
+            raise_if_not_found=False,
+        ) or self.env.ref('base_automation.view_base_automation_form', raise_if_not_found=False)
+        action = {
+            'type': 'ir.actions.act_window',
+            'name': 'Criar Automation Rule',
+            'res_model': 'base.automation',
+            'view_mode': 'form',
+            'target': 'new',
+            'context': {
+                'default_bitconn_webhook_id': self.id,
+            },
+        }
+        if view:
+            action['views'] = [(view.id, 'form')]
+            action['view_id'] = view.id
+        return action
     
     # Real-time request monitoring
     last_request_input = fields.Text(

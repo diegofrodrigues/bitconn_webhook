@@ -3,19 +3,45 @@ import json
 
 
 class IrActionsServer(models.Model):
+    _inherit = 'ir.actions.server'
+
     bitconn_preview_record_id = fields.Integer(
         string='ID para Preview',
         help='ID do registro a ser usado como exemplo no preview do Python Payload. Se vazio, busca o primeiro registro disponível.'
     )
     bitconn_python_payload = fields.Boolean(
-        string='Usar Python Payload',
-        help='Se ativo, executa o código Python abaixo para gerar o payload do webhook.'
+        string='Python Payload',
+        help='Se ativo, executa o código Python abaixo para gerar o payload do webhook.',
+        default=False,
     )
     bitconn_python_payload_code = fields.Text(
         string='Código Python Payload',
-        help='Bloco de código Python que recebe "record" (ou "records") e deve definir a variável "result" com o payload final.'
+        help='Bloco de código Python que recebe "record" (ou "records") e deve definir a variável "result" com o payload final.',
+        default="""# ==========================================
+# record - Current record (singleton)
+# ==========================================
+# record.id          - Record ID
+# record.name        - Record name (display_name)
+# record._name       - Model technical name (e.g. 'res.partner')
+# record.field_name  - Access any field value directly
+#
+# records - All records in the current execution (recordset)
+# env     - Odoo Environment. Access any model via env['model.name']
+#
+# Set result variable to define the webhook payload
+#
+# ==========================================
+# Example: Send record data to webhook
+# ==========================================
+# result = {
+#     'id': record.id,
+#     'name': record.name,
+#     'email': record.email,
+#     'model': record._name,
+# }
+
+result = {'id': record.id, 'name': record.name}"""
     )
-    _inherit = 'ir.actions.server'
 
     state = fields.Selection(
         selection_add=[('bitconn_webhook', 'Bitconn Webhook')],
@@ -58,6 +84,25 @@ class IrActionsServer(models.Model):
             # Only auto-fill if empty to avoid overwriting manual edits
             if not rec.bitconn_preview_payload:
                 rec.bitconn_preview_payload = rec._generate_bitconn_preview()
+
+    def write(self, vals):
+        res = super().write(vals)
+        if 'bitconn_webhook_id' in vals:
+            # Sync webhook to parent automation rule
+            for action in self:
+                if action.base_automation_id and vals.get('bitconn_webhook_id'):
+                    if not action.base_automation_id.bitconn_webhook_id:
+                        action.base_automation_id.bitconn_webhook_id = vals['bitconn_webhook_id']
+        return res
+
+    @api.model_create_multi
+    def create(self, vals_list):
+        records = super().create(vals_list)
+        for action in records:
+            if action.bitconn_webhook_id and action.base_automation_id:
+                if not action.base_automation_id.bitconn_webhook_id:
+                    action.base_automation_id.bitconn_webhook_id = action.bitconn_webhook_id
+        return records
 
     def action_generate_bitconn_preview(self):
         for rec in self:

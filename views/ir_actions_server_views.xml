@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <odoo>
 
-    <!-- Custom form for Server Actions when created from Bitconn Webhook -->
+    <!-- Primary form for Server Actions opened from Bitconn context -->
     <record id="ir_actions_server_view_form_bitconn" model="ir.ui.view">
         <field name="name">ir.actions.server.view.form.bitconn</field>
         <field name="model">ir.actions.server</field>
@@ -9,41 +9,27 @@
         <field name="priority">33</field>
         <field name="inherit_id" ref="base.view_server_action_form"/>
         <field name="arch" type="xml">
-            <!-- Replace the default sheet with a minimal Bitconn-only sheet -->
-            <xpath expr="//form/sheet" position="replace">
-                <sheet>
-                    <group>
-                        <field name="bitconn_webhook_id" readonly="1"/>
-                        <field name="model_id" invisible="1"/>
-                        <field name="bitconn_python_payload"/>
-                        <field name="bitconn_python_payload_code" widget="code" options="{'mode': 'python'}"/>
-                        <field name="bitconn_field_ids" widget="many2many_tags"/>
-                        <field name="bitconn_preview_record_id"/>
-                        <field name="bitconn_manual_payload"/>
-                        <field name="bitconn_manual_payload_text" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
-                        <field name="bitconn_preview_payload" widget="code" readonly="1" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
-                        <field name="bitconn_last_result" widget="code" readonly="1" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
-                    </group>
-                </sheet>
-            </xpath>
-            <!-- Hide the "Create Contextual Action" button when opening from Bitconn -->
+            <!-- Hide header buttons -->
             <xpath expr="//header/button[@name='create_action']" position="attributes">
                 <attribute name="invisible">1</attribute>
             </xpath>
-            <!-- state field removed from the replaced sheet; nothing else to patch -->
         </field>
     </record>
 
-    <!-- Adjust base_automation action_server_ids context to forward bitconn webhook defaults -->
-    <record id="view_base_automation_form_bitconn_ctx" model="ir.ui.view">
-        <field name="name">base.automation.form.bitconn.context</field>
+    <!-- Primary view for base.automation used ONLY from Bitconn Outbound tab.
+         Overrides action_server_ids context so new server actions default to bitconn_webhook state. -->
+    <record id="view_base_automation_form_bitconn" model="ir.ui.view">
+        <field name="name">base.automation.form.bitconn</field>
         <field name="model">base.automation</field>
+        <field name="mode">primary</field>
         <field name="inherit_id" ref="base_automation.view_base_automation_form"/>
         <field name="arch" type="xml">
             <xpath expr="//field[@name='action_server_ids']" position="attributes">
-                <attribute name="context">{'default_model_id': model_id, 'form_view_ref': 'bitconn_webhook.ir_actions_server_view_form_bitconn', 'default_bitconn_webhook_id': bitconn_webhook_id, 'default_state': 'bitconn_webhook'}</attribute>
+                <attribute name="context">{'default_model_id': model_id, 'default_state': 'bitconn_webhook', 'default_bitconn_webhook_id': bitconn_webhook_id, 'form_view_ref': 'bitconn_webhook.ir_actions_server_view_form_bitconn'}</attribute>
             </xpath>
         </field>
     </record>
+
+
 
 </odoo>

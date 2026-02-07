@@ -6,22 +6,42 @@
       <field name="model">ir.actions.server</field>
       <field name="inherit_id" ref="base.view_server_action_form"/>
       <field name="arch" type="xml">
+        <!-- Hide type selector when action belongs to a Bitconn Webhook -->
+        <xpath expr='//label[@for="state"]' position="attributes">
+          <attribute name="invisible">bitconn_webhook_id</attribute>
+        </xpath>
+        <xpath expr='//field[@name="state"]' position="attributes">
+          <attribute name="invisible">bitconn_webhook_id</attribute>
+        </xpath>
         <!-- Insert Webhook section at the end of the sheet to use the full modal width -->
         <xpath expr="//sheet" position="inside">
           <group name="bitconn_webhook_section" invisible="state != 'bitconn_webhook'" col="2" class="w-100">
             <field name="bitconn_webhook_id"/>
-            <field name="bitconn_manual_payload"/>
-            <div class="o_form_label text-muted" invisible="not bitconn_manual_payload">When Manual Payload is enabled, the payload below is sent as-is.</div>
-            <field name="bitconn_manual_payload_text" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_manual_payload" placeholder='{"fields":[]}'/>
 
-            <field name="bitconn_python_payload"/>
-                <field name="bitconn_preview_record_id" placeholder="ID para preview"/>
-            <div class="o_form_label text-muted" invisible="not bitconn_python_payload">When Python Payload is enabled, the code below is executed for each record. Define <b>result</b> as the payload to send.</div>
-            <field name="bitconn_python_payload_code" nolabel="1" widget="code" options="{'mode':'python','lang': 'python', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_python_payload" placeholder='result = {"id": record.id, "name": record.name}'/>
+            <separator string="Python Payload" colspan="2"/>
+            <field name="bitconn_python_payload" string="Python Payload" invisible="bitconn_manual_payload"/>
+            <div colspan="2" class="text-muted mb-2" invisible="not bitconn_python_payload">
+              Write your Python code below. Set <code>result</code> variable to define the payload sent to the webhook.
+              <br/>
+              <strong>💡 Tip:</strong> Define <code>result</code> as a <b>dict</b> or <b>list</b>. It will be serialized as JSON and sent to the webhook URL.
+            </div>
+            <field name="bitconn_python_payload_code" nolabel="1" widget="code" options="{'mode':'python','lang': 'python', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_python_payload" placeholder="# ==========================================&#10;# record - Current record (singleton)&#10;# ==========================================&#10;# record.id          - Record ID&#10;# record.name        - Record name (display_name)&#10;# record._name       - Model technical name (e.g. 'res.partner')&#10;# record.field_name  - Access any field value directly&#10;#&#10;# records - All records in the current execution (recordset)&#10;# env     - Odoo Environment. Access any model via env['model.name']&#10;#&#10;# Set result variable to define the webhook payload&#10;#&#10;# ==========================================&#10;# Example: Send record data to webhook&#10;# ==========================================&#10;# result = {&#10;#     'id': record.id,&#10;#     'name': record.name,&#10;#     'email': record.email,&#10;#     'model': record._name,&#10;# }"/>
 
+            <separator string="Manual Payload" colspan="2" invisible="bitconn_python_payload"/>
+            <field name="bitconn_manual_payload" invisible="bitconn_python_payload"/>
+            <div class="o_form_label text-muted" invisible="not bitconn_manual_payload or bitconn_python_payload">When Manual Payload is enabled, the payload below is sent as-is.</div>
+            <field name="bitconn_manual_payload_text" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" invisible="not bitconn_manual_payload or bitconn_python_payload" placeholder='{"fields":[]}'/>
+
+            <separator string="Fields to Send" colspan="2" invisible="bitconn_manual_payload or bitconn_python_payload"/>
             <field name="bitconn_field_ids" widget="many2many_tags" invisible="bitconn_manual_payload or bitconn_python_payload"/>
-            <separator string="Preview"/>
-            <button name="action_generate_bitconn_preview" type="object" string="Regenerate Preview" class="btn-secondary"/>
+            <separator string="Preview" colspan="2"/>
+            <div colspan="2" class="d-flex align-items-end gap-2 mb-3">
+              <div class="flex-grow-1">
+                <label for="bitconn_preview_record_id" string="ID do Registro"/>
+                <field name="bitconn_preview_record_id" placeholder="ID para preview" nolabel="1"/>
+              </div>
+              <button name="action_generate_bitconn_preview" type="object" string="Gerar Preview" class="btn-secondary" icon="fa-refresh"/>
+            </div>
             <field name="bitconn_preview_payload" nolabel="1" widget="code" options="{'mode':'javascript','lang': 'json', 'lineNumbers': true, 'lineWrapping': true}" class="w-100" colspan="2" placeholder='{"model": "res.partner", "records": [{"name": "string"}]}'/>
             <separator string="Last Result"/>
             <field name="bitconn_last_result" nolabel="1" widget="text" class="w-100" colspan="2" readonly="1"/>

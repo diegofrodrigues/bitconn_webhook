@@ -232,9 +232,14 @@
                     <field name="outbound_headers" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
                     <!-- Automation Rules placed right after Outbound Headers -->
                     <separator string="Automation Rules"/>
-                    <field name="automation_ids" nolabel="1" widget="one2many" class="o_base_automation_actions_field"
-                       context="{'default_trigger': 'on_webhook', 'active_test': False}">
-                      <kanban class="o_base_automation_kanban" records_draggable="false" quick_create="false" group_create="false">
+                    <header>
+                      <button name="action_create_server_action" type="object" string="Adicionar" class="btn-primary" icon="fa-plus"/>
+                    </header>
+                    <field name="automation_ids" nolabel="1" widget="one2many" class="o_base_automation_actions_field" create="false" delete="false"
+                          context="{'active_test': False}">
+                      <kanban class="o_base_automation_kanban" records_draggable="false" quick_create="false" group_create="false" create="false">
+                        <control>
+                        </control>
                         <field name="active"/>
                         <templates>
                           <t t-name="card" class="flex-md-row">
