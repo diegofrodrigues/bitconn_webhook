@@ -45,7 +45,7 @@ result = {'id': record.id, 'name': record.name}"""
 
     state = fields.Selection(
         selection_add=[('bitconn_webhook', 'Bitconn Webhook')],
-        ondelete={'bitconn_webhook': 'set default'}
+        ondelete={'bitconn_webhook': 'cascade'}
     )
     bitconn_webhook_id = fields.Many2one('bitconn.webhook', string='Webhook', help='Webhook configuration to use for outbound send')
     bitconn_field_ids = fields.Many2many(

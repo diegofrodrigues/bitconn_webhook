@@ -795,12 +795,11 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
             if source == 'view':
                 # Parse the primary form view and collect fields with required flags
                 try:
-                    view_info = Model.fields_view_get(view_type='form')
+                    view_info = Model.get_view(view_type='form')
                     arch = view_info.get('arch') or ''
                     required_fields = []
                     if arch:
                         from lxml import etree as ET
-                        import json as _json
                         root = ET.fromstring(arch.encode('utf-8'))
                         seen = set()
                         for node in root.xpath('.//field[@name]'):
@@ -811,15 +810,6 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
                             req_attr = node.get('required')
                             if req_attr in ('1', 'true', 'True'):
                                 is_req = True
-                            mods = node.get('modifiers')
-                            if not is_req and mods:
-                                try:
-                                    mods_obj = _json.loads(mods)
-                                    # modifiers.required can be a boolean or an expression; treat truthy as potentially required
-                                    if bool(mods_obj.get('required')):
-                                        is_req = True
-                                except Exception:
-                                    pass
                             if is_req:
                                 seen.add(fname)
                                 required_fields.append(fname)

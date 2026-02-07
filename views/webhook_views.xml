@@ -90,6 +90,10 @@
                     The code will run with the configured user's permissions and full access to all models.
                   </div>
                 </group>
+                <div class="alert alert-danger" role="alert" invisible="inbound_auth_type != 'none'">
+                  <strong>⚠️ Security Warning:</strong> This webhook is configured for public access without authentication.
+                  Anyone with the webhook URL can send requests. Only use this for trusted sources or public endpoints.
+                </div>
                 
                 <group>
                   <group col="2" class="w-100">
@@ -107,9 +111,7 @@
                 </group>
                 
                 <!-- Python Code Section (visible only when can_code is True) -->
-                <group invisible="can_code == False">
-                  <separator string="HTTP Methods"/>
-                </group>
+                <separator string="HTTP Methods" invisible="can_code == False"/>
                 <group col="2" invisible="can_code == False">
                   <field name="inbound_allowed_methods" widget="radio"/>
                   <group colspan="2" invisible="inbound_allowed_methods != 'CUSTOM'">
@@ -125,24 +127,18 @@
                   </group>
                 </group>
                 
-                <group invisible="can_code == False">
-                  <separator string="Python Code"/>
-                  <div class="text-muted">
-                    Write your Python code below. Set <code>result</code> variable to return custom response.
-                    <br/>
-                    <strong>💡 Tip:</strong> See the <strong>Help</strong> tab for complete documentation and available variables.
-                  </div>
-                </group>
-                <group invisible="can_code == False">
-                  <field name="python_code" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'lineNumbers': true}" placeholder="# Available variables: request, env, user_id, json&#10;# Set result variable to return response&#10;&#10;# Example: Create a partner from webhook data&#10;data = request['json']&#10;partner = env['res.partner'].create({&#10;    'name': data.get('name'),&#10;    'email': data.get('email')&#10;})&#10;result = {'ok': True, 'partner_id': partner.id, 'name': partner.name}"/>
-                </group>
+                <separator string="Python Code" invisible="can_code == False"/>
+                <div class="text-muted mb-2" invisible="can_code == False">
+                  Write your Python code below. Set <code>result</code> variable to return custom response.
+                  <br/>
+                  <strong>💡 Tip:</strong> See the <strong>Help</strong> tab for complete documentation and available variables.
+                </div>
+                <field name="python_code" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'lineNumbers': true}" invisible="can_code == False" placeholder="# Available variables: request, env, user_id, json&#10;# Set result variable to return response&#10;&#10;# Example: Create a partner from webhook data&#10;data = request['json']&#10;partner = env['res.partner'].create({&#10;    'name': data.get('name'),&#10;    'email': data.get('email')&#10;})&#10;result = {'ok': True, 'partner_id': partner.id, 'name': partner.name}"/>
                 
-                <group invisible="can_code == False">
-                  <separator string="Request Monitor (Real-time)"/>
-                  <div class="text-muted">
-                    These fields update automatically when a webhook request is received while you're on this tab.
-                  </div>
-                </group>
+                <separator string="Request Monitor (Real-time)" invisible="can_code == False"/>
+                <div class="text-muted mb-2" invisible="can_code == False">
+                  These fields update automatically when a webhook request is received while you're on this tab.
+                </div>
                 <group col="2" class="o_group o_inner_group" invisible="can_code == False">
                   <group class="w-100">
                     <label for="last_request_input" string="Last Request Input" class="o_form_label"/>
@@ -154,65 +150,45 @@
                     <field name="last_request_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                   </group>
                 </group>
-                <group invisible="can_code == False">
-                  <div class="d-flex align-items-center">
-                    <button name="action_refresh_monitor" type="object" string="Refresh Monitor" class="btn-primary me-2" icon="fa-refresh"/>
-                    <button name="action_clear_request_input" type="object" string="Clear Monitor" class="btn-secondary" icon="fa-eraser"/>
+                <div class="d-flex align-items-center mb-3" invisible="can_code == False">
+                  <button name="action_refresh_monitor" type="object" string="Refresh Monitor" class="btn-primary me-2" icon="fa-refresh"/>
+                  <button name="action_clear_request_input" type="object" string="Clear Monitor" class="btn-secondary" icon="fa-eraser"/>
+                </div>
+                
+                <separator string="Test Code" invisible="can_code == False"/>
+                <group col="1" invisible="can_code == False">
+                  <field name="enable_test"/>
+                </group>
+                <div invisible="can_code == False or enable_test == False or pin_request == True">
+                  <div class="text-muted mb-2">Simulate the JSON request body that will be sent to the webhook to test your Python code.</div>
+                  <field name="test_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
+                </div>
+                <div class="d-flex align-items-center mb-3" invisible="can_code == False or enable_test == False">
+                  <button name="action_test_code" type="object" string="Test Code" class="btn-primary me-2" icon="fa-play"/>
+                  <button name="action_clear_test_output" type="object" string="Clear Output" class="btn-secondary" icon="fa-eraser"/>
+                </div>
+                <div invisible="can_code == False or enable_test == False">
+                  <label for="test_output" string="Test Output (Result Variable)" class="o_form_label"/>
+                  <field name="test_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                </div>
+                
+                <separator string="Sample Request (Latest Received)" invisible="can_code == False"/>
+                <div invisible="can_code == False">
+                  <field name="pin_request"/>
+                  <div class="text-muted mb-2" invisible="pin_request == False">
+                    <i class="fa fa-thumb-tack"/> Using this sample as test input. Uncheck above to use custom Test Input.
+                    <br/>
+                    <strong>Note:</strong> Webhook responses will include author/support information when Pin Request is enabled.
                   </div>
-                </group>
+                </div>
+                <div invisible="can_code == False or pin_request == False">
+                  <field name="sample_request_payload" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
+                </div>
+                <div class="d-flex align-items-center mb-3" invisible="can_code == False or pin_request == False">
+                  <button name="action_refresh_sample" type="object" string="Refresh Sample" class="btn-primary me-2" icon="fa-refresh"/>
+                  <button name="action_clear_sample_request" type="object" string="Clear Sample" class="btn-secondary" icon="fa-eraser"/>
+                </div>
                 
-                <group invisible="can_code == False">
-                  <separator string="Test Code"/>
-                </group>
-                <group col="2" invisible="can_code == False">
-                  <group class="w-100" colspan="2">
-                    <field name="enable_test"/>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="enable_test == False or pin_request == True">
-                    <label for="test_input" string="Test Input (Request Body)" class="o_form_label"/>
-                    <field name="test_input" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="enable_test == False">
-                    <div class="d-flex align-items-center">
-                      <button name="action_test_code" type="object" string="Test Code" class="btn-primary me-2" icon="fa-play"/>
-                      <button name="action_clear_test_output" type="object" string="Clear Output" class="btn-secondary" icon="fa-eraser"/>
-                    </div>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="enable_test == False">
-                    <label for="test_output" string="Test Output (Result Variable)" class="o_form_label"/>
-                    <field name="test_output" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
-                  </group>
-                </group>
-                
-                <group invisible="can_code == False">
-                  <separator string="Sample Request (Latest Received)"/>
-                </group>
-                <group col="2" invisible="can_code == False">
-                  <group class="w-100" colspan="2">
-                    <field name="pin_request"/>
-                    <div class="text-muted" invisible="pin_request == False">
-                      <i class="fa fa-thumb-tack"/> Using this sample as test input. Uncheck above to use custom Test Input.
-                      <br/>
-                      <strong>Note:</strong> Webhook responses will include author/support information when Pin Request is enabled.
-                    </div>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="pin_request == False">
-                    <field name="sample_request_payload" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="pin_request == False">
-                    <div class="d-flex align-items-center">
-                      <button name="action_refresh_sample" type="object" string="Refresh Sample" class="btn-primary me-2" icon="fa-refresh"/>
-                      <button name="action_clear_sample_request" type="object" string="Clear Sample" class="btn-secondary" icon="fa-eraser"/>
-                    </div>
-                  </group>
-                </group>
-                
-                <group invisible="inbound_auth_type != 'none'">
-                  <div class="alert alert-danger" role="alert">
-                    <strong>⚠️ Security Warning:</strong> This webhook is configured for public access without authentication.
-                    Anyone with the webhook URL can send requests. Only use this for trusted sources or public endpoints.
-                  </div>
-                </group>
               </page>
 
               <page string="Outbound">
@@ -224,66 +200,63 @@
                     <field name="outbound_method"/>
                   </group>
                 </group>
-                <group col="2">
-                  <field name="outbound_url" colspan="2"/>
+                <group col="1">
+                  <field name="outbound_url"/>
                 </group>
-                <group col="2">
-                    <separator string="Headers"/>
-                    <field name="outbound_headers" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" colspan="2" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
-                    <!-- Automation Rules placed right after Outbound Headers -->
-                    <separator string="Automation Rules"/>
-                    <header>
-                      <button name="action_create_server_action" type="object" string="Adicionar" class="btn-primary" icon="fa-plus"/>
-                    </header>
-                    <field name="automation_ids" nolabel="1" widget="one2many" class="o_base_automation_actions_field" create="false" delete="false"
-                          context="{'active_test': False}">
-                      <kanban class="o_base_automation_kanban" records_draggable="false" quick_create="false" group_create="false" create="false">
-                        <control>
-                        </control>
-                        <field name="active"/>
-                        <templates>
-                          <t t-name="card" class="flex-md-row">
-                            <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active" />
-                            <div class="d-flex align-items-center w-100 w-md-25 o_automation_base_info">
-                              <div class="d-flex flex-column">
-                                <field name="name" class="fs-2 fw-bold"/>
-                                <field name="model_id" invisible="context.get('default_model_id')"/>
-                                <div class="d-flex align-items-center gap-1 text-nowrap" invisible="trigger in ['on_time', 'on_time_created', 'on_time_updated']">
-                                  <field name="trigger"/>
-                                  <field name="on_change_field_ids" invisible="trigger != 'on_change'" class="my-1" />
-                                  <field name="trg_selection_field_id" invisible="trigger not in ['on_state_set', 'on_priority_set']" class="o_tag o_tag_color_0 rounded-pill p-1 px-2" />
-                                  <field name="trg_field_ref" invisible="trigger not in ['on_stage_set', 'on_tag_set']" class="o_tag o_tag_color_0 rounded-pill p-1 px-2" />
-                                  <field name="trigger_field_ids" invisible="trigger not in ['on_create_or_write']" class="my-1" />
-                                </div>
-                              </div>
+                <separator string="Headers"/>
+                <field name="outbound_headers" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}" placeholder='{"Authorization": "Bearer xxxxxxxxxxx"}'/>
+                <!-- Automation Rules - fora do group para largura total -->
+                <separator string="Automation Rules"/>
+                <div class="mb-4">
+                  <button name="action_create_server_action" type="object" string="Adicionar" class="btn-primary" icon="fa-plus"/>
+                </div>
+                <field name="automation_ids" nolabel="1" widget="one2many" class="o_base_automation_actions_field" create="false" delete="false"
+                      context="{'active_test': False}">
+                  <kanban class="o_base_automation_kanban_view" records_draggable="false" quick_create="false" group_create="false" create="false">
+                    <control>
+                    </control>
+                    <field name="active"/>
+                    <templates>
+                      <t t-name="card" class="flex-md-row">
+                        <widget name="web_ribbon" title="Archived" bg_color="text-bg-danger" invisible="active" />
+                        <div class="d-flex align-items-center w-100 w-md-25 o_automation_base_info">
+                          <div class="d-flex flex-column">
+                            <field name="name" class="fs-2 fw-bold"/>
+                            <field name="model_id" invisible="context.get('default_model_id')"/>
+                            <div class="d-flex align-items-center gap-1 text-nowrap" invisible="trigger in ['on_time', 'on_time_created', 'on_time_updated']">
+                              <field name="trigger"/>
+                              <field name="on_change_field_ids" invisible="trigger != 'on_change'" class="my-1" />
+                              <field name="trg_selection_field_id" invisible="trigger not in ['on_state_set', 'on_priority_set']" class="o_tag o_tag_color_0 rounded-pill p-1 px-2" />
+                              <field name="trg_field_ref" invisible="trigger not in ['on_stage_set', 'on_tag_set']" class="o_tag o_tag_color_0 rounded-pill p-1 px-2" />
+                              <field name="trigger_field_ids" invisible="trigger not in ['on_create_or_write']" class="my-1" />
                             </div>
-                            <div class="d-none d-md-flex flex-grow-1 align-items-center gap-3 o_automation_actions" data-name="more-info">
-                              <i class="fa fa-2x fa-arrow-right text-primary" title="Actions" />
-                              <field name="action_server_ids" widget="base_automation_actions_one2many" class="align-self-center w-100 me-md-3" />
-                            </div>
-                          </t>
-                        </templates>
-                      </kanban>
-                    </field>
-                  <separator string="Test"/>
-                  <group class="w-100" colspan="2">
-                    <field name="enable_test_outbound"/>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="enable_test_outbound == False">
-                    <label for="outbound_test_body" string="Test Body (JSON)" class="o_form_label"/>
-                    <field name="outbound_test_body" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="enable_test_outbound == False">
-                    <div class="d-flex align-items-center">
-                      <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary me-2" icon="fa-paper-plane"/>
-                      <button name="action_clear_outbound_test_result" type="object" string="Clear Test Result" class="btn-secondary" icon="fa-eraser"/>
-                    </div>
-                  </group>
-                  <group class="w-100" colspan="2" invisible="enable_test_outbound == False">
-                    <label for="outbound_test_result" string="Test Result" class="o_form_label"/>
-                    <field name="outbound_test_result" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
-                  </group>
-                  <!-- Server Actions list removed to avoid duplication with Automation Rules -->
+                          </div>
+                        </div>
+                        <div class="d-none d-md-flex flex-grow-1 align-items-center gap-3 o_automation_actions" data-name="more-info">
+                          <i class="fa fa-2x fa-arrow-right text-primary" title="Actions" />
+                          <field name="action_server_ids" widget="base_automation_actions_one2many" class="align-self-center w-100 me-md-3" />
+                        </div>
+                      </t>
+                    </templates>
+                  </kanban>
+                </field>
+                <separator string="Test"/>
+                <group col="1">
+                  <field name="enable_test_outbound"/>
+                </group>
+                <group col="1" invisible="enable_test_outbound == False">
+                  <label for="outbound_test_body" string="Test Body (JSON)" class="o_form_label"/>
+                  <field name="outbound_test_body" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'lineNumbers': true}"/>
+                </group>
+                <group col="1" invisible="enable_test_outbound == False">
+                  <div class="d-flex align-items-center">
+                    <button name="action_test_outbound" type="object" string="Send Test" class="btn-primary me-2" icon="fa-paper-plane"/>
+                    <button name="action_clear_outbound_test_result" type="object" string="Clear Test Result" class="btn-secondary" icon="fa-eraser"/>
+                  </div>
+                </group>
+                <group col="1" invisible="enable_test_outbound == False">
+                  <label for="outbound_test_result" string="Test Result" class="o_form_label"/>
+                  <field name="outbound_test_result" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                 </group>
               </page>
               <page string="Terminal">

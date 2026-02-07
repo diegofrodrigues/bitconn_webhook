@@ -20,7 +20,7 @@ Security:
 
 See README.md for full documentation & examples (n8n workflows, advanced specs, troubleshooting).
 """,
-    'version': '1.4.0',
+    'version': '19.0.1.4.0',
     'category': 'Tools',
     'author': 'Bitconn Technology',
     'website': 'https://bitconn.com.br',
@@ -39,7 +39,7 @@ See README.md for full documentation & examples (n8n workflows, advanced specs, 
             'bitconn_webhook/static/src/js/bitconn_terminal_ws.js',
         ],
     },
-    'license': 'GPL-3',
+    'license': 'LGPL-3',
     'installable': True,
     'application': False,
     'auto_install': False,

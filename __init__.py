@@ -12,13 +12,13 @@ def _install_dependencies():
         'websockets': 'websockets',
     }
     missing = []
-    
+
     for pip_pkg, import_name in packages_map.items():
         try:
             __import__(import_name)
         except ImportError:
             missing.append(pip_pkg)
-    
+
     if missing:
         _logger.info(f"Instalando dependências: {', '.join(missing)}")
         try:
@@ -27,7 +27,7 @@ def _install_dependencies():
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE
             )
-            _logger.info(f"Dependências instaladas com sucesso")
+            _logger.info("Dependências instaladas com sucesso")
         except Exception as e:
             _logger.error(f"Erro ao instalar dependências: {e}")
 
