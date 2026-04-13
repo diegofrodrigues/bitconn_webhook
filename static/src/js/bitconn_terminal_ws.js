@@ -227,11 +227,13 @@
                     // Reset terminal to initial state
                     resetTerminal();
                     
-                    // Show appropriate message for errors only
+                    // Show appropriate message
                     if (event.code === 1008) {
                         showBanner('Authentication failed. Click Connect to retry.');
+                    } else if (event.code === 1011) {
+                        showBanner('Shell process terminated. Click Connect to start a new session.');
                     } else if (event.code !== 1000 && event.code !== 1001) {
-                        showBanner('Connection closed unexpectedly. Click Connect to reconnect.');
+                        showBanner('Connection closed (code ' + event.code + '). Click Connect to reconnect.');
                     }
                 };
                 

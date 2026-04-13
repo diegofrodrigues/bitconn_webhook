@@ -1,5 +1,5 @@
 <h1 align="center">Bitconn Webhook</h1>
-<p align="center">Inbound & outbound Webhook API for Odoo 18 – simple JSON calls in, structured data & automation events out.</p>
+<p align="center">Inbound & outbound Webhook API for Odoo 19 – simple JSON calls in, structured data & automation events out.</p>
 
 ## 1. What this module does
 Inbound: exposes a secure HTTP JSON API so external systems (n8n, Zapier, custom apps, other SaaS) can Create / Write / Unlink / Read / Search Odoo records, fetch schema metadata, and request a default/template payload.
@@ -185,19 +185,27 @@ The `websockets` lib will be installed automatically on first import.
 
 **Note**: No hardcoded paths! Works from any directory structure.
 
-#### 2. Configure Secret Key (optional)
+#### 2. Configure Terminal (odoo.conf)
 
-```bash
-export WS_SECRET_KEY="your-secret-key-min-32-chars"
-export WS_HOST="127.0.0.1"  # default
-export WS_PORT="8765"        # default
-```
+Add to your `odoo.conf` (or equivalent config file) under `[options]`:
 
-Or add to `odoo.conf`:
 ```ini
 [options]
-# ... other configs
+; ... other configs
+ws_secret_key = your-secret-key-min-32-chars
+ws_host = 127.0.0.1
+ws_port = 8765
 ```
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `ws_secret_key` | `change-this-secret-key-in-production` | HMAC-SHA256 signing key for JWT tokens. **Change in production!** |
+| `ws_host` | `127.0.0.1` | WebSocket server bind address |
+| `ws_port` | `8765` | WebSocket server port |
+
+> **Note:** Odoo will log `unknown option` warnings for these keys — this is normal and expected. The values are stored and read correctly by the module.
+>
+> Environment variables (`WS_SECRET_KEY`, `WS_HOST`, `WS_PORT`) are still supported as fallback.
 
 #### 3. Test
 
@@ -250,7 +258,7 @@ ss -tlnp | grep 8765
 ```
 
 #### "Authentication failed"
-Different secret key between token generation and validation. Check `WS_SECRET_KEY` env var.
+Different secret key between token generation and validation. Check `ws_secret_key` in your `odoo.conf`.
 
 #### Browser doesn't connect
 Check browser console (F12):
@@ -266,6 +274,10 @@ sudo ufw allow 8765/tcp
 
 #### Nginx Proxy (HTTPS + WSS)
 
+The WebSocket server runs plaintext (`ws://`) internally. For HTTPS production, nginx terminates TLS and proxies `wss://` → `ws://`.
+
+The module **auto-detects HTTPS** via `X-Forwarded-Proto` header and returns `wss://` URLs automatically.
+
 ```nginx
 upstream odoo {
     server 127.0.0.1:8069;
@@ -278,32 +290,73 @@ upstream ws_terminal {
 server {
     listen 443 ssl http2;
     server_name example.com;
-    
-    # Odoo
-    location / {
-        proxy_pass http://odoo;
-        # ... standard Odoo configs
-    }
-    
-    # Terminal WebSocket
+
+    ssl_certificate     /etc/ssl/certs/example.com.crt;
+    ssl_certificate_key /etc/ssl/private/example.com.key;
+
+    # Forward original protocol/host to Odoo (required for auto wss:// detection)
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host  $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header Host              $host;
+
+    # Terminal WebSocket — MUST come before the catch-all /
     location /ws/terminal {
         proxy_pass http://ws_terminal;
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Upgrade    $http_upgrade;
         proxy_set_header Connection "upgrade";
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
     }
+
+    # Odoo longpolling
+    location /websocket {
+        proxy_pass http://odoo;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade    $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
+    }
+
+    # Odoo (catch-all)
+    location / {
+        proxy_pass http://odoo;
+        proxy_redirect off;
+        client_max_body_size 100m;
+    }
+}
+
+# HTTP → HTTPS redirect
+server {
+    listen 80;
+    server_name example.com;
+    return 301 https://$host$request_uri;
 }
 ```
 
-Configure public URL:
-```bash
-# In production, update in __manifest__ or via env:
-export WS_HOST="0.0.0.0"  # allow external
+#### odoo.conf for production
+
+```ini
+[options]
+proxy_mode = True
+ws_host = 0.0.0.0
+ws_port = 8765
+ws_secret_key = your-secret-key-min-32-chars-change-me
+; Optional: override auto-detected WS URL (useful for non-standard setups)
+; ws_public_url = wss://example.com/ws/terminal
 ```
 
-Update client JS to use Nginx URL (automatic via token response).
+| Key | Default | Description |
+|-----|---------|-------------|
+| `ws_host` | `127.0.0.1` | WebSocket bind address. Use `0.0.0.0` when nginx runs on a different host. |
+| `ws_port` | `8765` | WebSocket server port |
+| `ws_secret_key` | *(insecure default)* | HMAC-SHA256 signing key. **Must change in production!** |
+| `ws_public_url` | *(auto)* | Explicit public WSS URL. Overrides auto-detection. |
+| `proxy_mode` | `False` | **Must be `True`** for `X-Forwarded-Proto` to be trusted. |
+
+> **Important:** `proxy_mode = True` is required for Odoo to trust the `X-Forwarded-Proto` header from nginx. Without it, the module cannot auto-detect HTTPS and will return `ws://` URLs.
 
 ### Comparison
 

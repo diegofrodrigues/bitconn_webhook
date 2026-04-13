@@ -41,7 +41,7 @@ See README.md for full documentation & examples (n8n workflows, advanced specs, 
     },
     'license': 'LGPL-3',
     'installable': True,
-    'application': False,
+    'application': True,
     'auto_install': False,
     # 'images': ['static/description/icon.svg'],
 }
