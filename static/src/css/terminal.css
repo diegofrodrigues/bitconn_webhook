@@ -1,0 +1,23 @@
+/* Full-page terminal layout */
+.o_bitconn_terminal_fullpage {
+    overflow: hidden;
+}
+
+.o_bitconn_terminal_fullpage #bitconn_terminal {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.o_bitconn_terminal_fullpage #bitconn_terminal .xterm {
+    height: 100%;
+}
+
+.o_bitconn_terminal_fullpage #bitconn_terminal .xterm-screen {
+    height: 100% !important;
+}
+
+/* Hide breadcrumb back button when in terminal view (cleaner look) */
+.o_bitconn_terminal_fullpage ~ .o_control_panel .breadcrumb {
+    display: none;
+}

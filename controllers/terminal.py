@@ -21,6 +21,7 @@ import fcntl
 import termios
 import signal
 import shutil
+from urllib.parse import parse_qs, urlparse, unquote
 
 try:
     import websockets
@@ -59,14 +60,20 @@ def _is_ws_secret_safe():
 
 def _get_odoo_root():
     """Get Odoo root directory dynamically."""
-    # Try to get from odoo module location
     try:
         import odoo
-        odoo_path = os.path.dirname(odoo.__file__)
-        return os.path.dirname(odoo_path)  # Parent of odoo package
-    except:
-        # Fallback to current working directory
-        return os.getcwd()
+        # odoo may be a namespace package (__file__ is None), use __path__ instead
+        odoo_paths = getattr(odoo, '__path__', None)
+        if odoo_paths:
+            # __path__ is e.g. ['/home/.../odoo-19.0/odoo'], parent = project root
+            return os.path.dirname(list(odoo_paths)[0])
+        odoo_file = getattr(odoo, '__file__', None)
+        if odoo_file:
+            return os.path.dirname(os.path.dirname(odoo_file))
+    except Exception:
+        pass
+    # Fallback to current working directory
+    return os.getcwd()
 
 
 def _get_odoo_bin():
@@ -186,26 +193,35 @@ def _verify_token(token):
 
 
 async def _read_pty_async(master_fd, websocket, session_id):
-    """Read from PTY and send to WebSocket."""
+    """Read from PTY and send to WebSocket using async fd watching."""
     loop = asyncio.get_event_loop()
+    q = asyncio.Queue()
+
+    def _on_readable():
+        try:
+            data = os.read(master_fd, 4096)
+            if data:
+                q.put_nowait(data)
+            else:
+                q.put_nowait(None)
+        except OSError:
+            q.put_nowait(None)
+
+    loop.add_reader(master_fd, _on_readable)
     try:
         while True:
-            try:
-                data = await loop.run_in_executor(None, os.read, master_fd, 4096)
-                if not data:
-                    break
-                await websocket.send(data)
-            except OSError:
+            data = await q.get()
+            if data is None:
                 break
+            await websocket.send(data)
     except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
         pass
     finally:
-        _logger.info(f"[{session_id}] PTY reader stopped")
-        # Close WS with 1011 (Internal Error) so frontend knows the shell died
         try:
-            await websocket.close(1011, 'Shell process ended')
+            loop.remove_reader(master_fd)
         except Exception:
             pass
+        _logger.info(f"[{session_id}] PTY reader stopped")
 
 
 async def _handle_websocket(websocket, path=None):
@@ -216,10 +232,20 @@ async def _handle_websocket(websocket, path=None):
     reader_task = None
     
     try:
-        # Parse token from query string (from websocket.request.path or legacy path arg)
-        ws_path = path if path else (websocket.request.path if hasattr(websocket, 'request') else websocket.path)
-        query = dict(param.split('=') for param in ws_path.split('?')[1].split('&') if '=' in param) if '?' in ws_path else {}
-        token = query.get('token', '')
+        # Parse token from query string – works with websockets 10-16 and behind reverse proxy
+        ws_path = path if path else ''
+        if not ws_path:
+            # websockets >= 13: path not passed; use request object
+            if hasattr(websocket, 'request') and hasattr(websocket.request, 'path'):
+                ws_path = websocket.request.path
+            elif hasattr(websocket, 'path'):
+                ws_path = websocket.path
+            else:
+                ws_path = '/'
+        _logger.debug(f"WS handshake path: {ws_path}")
+        parsed = urlparse(ws_path)
+        qs = parse_qs(parsed.query)
+        token = unquote(qs.get('token', [''])[0])
         
         payload = _verify_token(token)
         if not payload:
@@ -273,19 +299,35 @@ async def _handle_websocket(websocket, path=None):
         _ensure_venv_env(env)
         env['TERM'] = 'xterm-256color'
         env.setdefault('COLORTERM', 'truecolor')
+        # Ensure IPython has a writable config dir (avoids warning when $HOME is not writable)
+        home = env.get('HOME', '/tmp')
+        ipython_dir = os.path.join(home, '.ipython')
+        try:
+            os.makedirs(ipython_dir, exist_ok=True)
+        except OSError:
+            # HOME not writable — use /tmp fallback
+            ipython_dir = os.path.join('/tmp', f'.ipython_{user_id}')
+            os.makedirs(ipython_dir, exist_ok=True)
+        env['IPYTHONDIR'] = ipython_dir
         # Clean prompt matching the welcome banner style
         env['PS1'] = '\\[\\033[1;34m\\][bitconn]\\[\\033[0m\\]:\\w$ '
         
         _logger.info(f"[{session_id}] Spawning: {' '.join(cmd)} (python={python_exe}, cwd={working_dir})")
         
+        # Send loading message for odoo shell (takes 30-60s to start)
+        if shell_mode == 'odoo':
+            await websocket.send(b'\x1b[1;33mStarting Odoo shell, loading modules... please wait.\x1b[0m\r\n')
+
         proc = subprocess.Popen(
             cmd, cwd=working_dir, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
             close_fds=True, env=env, preexec_fn=os.setsid
         )
         os.close(slave_fd)
+        slave_fd = -1
         
         # Check if process died immediately (e.g. missing deps, bad config)
-        await asyncio.sleep(0.5)
+        check_delay = 2.0 if shell_mode == 'odoo' else 0.5
+        await asyncio.sleep(check_delay)
         if proc.poll() is not None:
             _logger.error(f"[{session_id}] Shell died immediately, exit code={proc.returncode}")
             try:
@@ -333,13 +375,22 @@ async def _handle_websocket(websocket, path=None):
     except Exception as e:
         _logger.exception(f"[{session_id}] Error: {e}")
     finally:
+        # 1. Cancel reader task first (add_reader-based, cancels instantly at await q.get)
         if reader_task:
             reader_task.cancel()
             try:
                 await reader_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
         
+        # 2. Close master_fd (after reader removed its add_reader hook)
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
+        
+        # 3. Kill shell process
         if proc and proc.poll() is None:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -350,15 +401,15 @@ async def _handle_websocket(websocket, path=None):
                 except Exception:
                     pass
         
-        if master_fd is not None:
-            try:
-                os.close(master_fd)
-            except Exception:
-                pass
+        # 4. Close websocket with proper code
+        try:
+            await websocket.close(1011, 'Shell process ended')
+        except Exception:
+            pass
         
-        if session_id in WS_SESSIONS:
+        if session_id and session_id in WS_SESSIONS:
             del WS_SESSIONS[session_id]
-            _logger.info(f"[{session_id}] Cleaned up")
+        _logger.info(f"[{session_id}] Cleaned up")
 
 
 def _start_websocket_server():
@@ -386,8 +437,10 @@ def _start_websocket_server():
                 _handle_websocket,
                 WS_HOST,
                 WS_PORT,
-                ping_interval=20,
-                ping_timeout=10
+                ping_interval=30,
+                ping_timeout=20,
+                close_timeout=5,
+                max_size=2**20,
             )
             _logger.info(f"WebSocket terminal server started on {WS_HOST}:{WS_PORT}")
             await asyncio.Future()
@@ -396,6 +449,12 @@ def _start_websocket_server():
             loop.run_until_complete(serve())
         except Exception as e:
             _logger.exception(f"WebSocket server error: {e}")
+            # Attempt restart after crash
+            time.sleep(2)
+            try:
+                loop.run_until_complete(serve())
+            except Exception:
+                _logger.critical("WebSocket server failed to restart")
     
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()

@@ -26,7 +26,6 @@
             return;
         }
         var term = new Terminal({cursorBlink: true});
-        
         term.open(termEl);
         
         // Load FitAddon if available
@@ -77,6 +76,11 @@
         var wsUrl = null;
         var bannerEl = container.querySelector('#bitconn_terminal_banner');
         var _onDataDisposable = null; // track onData handler for cleanup
+        var _keepaliveTimer = null;   // periodic keepalive for proxy environments
+        var _lastShellMode = 'bash';  // remember last mode for auto-reconnect
+        var _reconnectAttempts = 0;
+        var _maxReconnectAttempts = 3;
+        var _userDisconnected = false; // true when user clicks Disconnect
 
         function showBanner(msg) {
             try {
@@ -133,6 +137,9 @@
         function startSession(shellMode) {
             if (ws) { return; }
             shellMode = shellMode || 'bash';
+            _lastShellMode = shellMode;
+            _userDisconnected = false;
+            _reconnectAttempts = 0;
             
             fetch('/bitconn_webhook/terminal/get_ws_token', {
                 method: 'POST',
@@ -188,12 +195,15 @@
             }
             
             var fullUrl = wsUrl + '?token=' + encodeURIComponent(wsToken);
+            console.log('[bitconn_terminal] Connecting to', wsUrl);
             
             try {
                 ws = new WebSocket(fullUrl);
                 ws.binaryType = 'arraybuffer';
                 
                 ws.onopen = function() {
+                    console.log('[bitconn_terminal] Connected');
+                    _reconnectAttempts = 0;
                     hideBanner();
                     setButtonsState(true);
                     
@@ -202,6 +212,12 @@
                     
                     // Send initial resize
                     sendResize();
+                    
+                    // Start keepalive: send resize every 25s to keep nginx proxy alive
+                    _stopKeepalive();
+                    _keepaliveTimer = setInterval(function() {
+                        sendResize();
+                    }, 25000);
                     
                     // Focus terminal
                     try { term.focus(); } catch(e) {}
@@ -223,22 +239,65 @@
                 };
                 
                 ws.onclose = function(event) {
+                    console.log('[bitconn_terminal] Closed, code=' + event.code + ' reason=' + event.reason);
+                    _stopKeepalive();
                     
-                    // Reset terminal to initial state
-                    resetTerminal();
+                    // Dispose input handler
+                    if (_onDataDisposable && typeof _onDataDisposable.dispose === 'function') {
+                        _onDataDisposable.dispose();
+                        _onDataDisposable = null;
+                    }
+                    ws = null;
                     
-                    // Show appropriate message
-                    if (event.code === 1008) {
-                        showBanner('Authentication failed. Click Connect to retry.');
-                    } else if (event.code === 1011) {
-                        showBanner('Shell process terminated. Click Connect to start a new session.');
-                    } else if (event.code !== 1000 && event.code !== 1001) {
-                        showBanner('Connection closed (code ' + event.code + '). Click Connect to reconnect.');
+                    // If user clicked Disconnect, just reset
+                    if (_userDisconnected) {
+                        setButtonsState(false);
+                        term.clear();
+                        showWelcome();
+                        return;
+                    }
+                    
+                    // Auth failure or deliberate close — no retry
+                    if (event.code === 1008 || event.code === 1000) {
+                        setButtonsState(false);
+                        if (event.code === 1008) {
+                            term.writeln('\r\n\x1b[1;31m[AUTH] Authentication failed. Click Connect to retry.\x1b[0m');
+                        }
+                        return;
+                    }
+                    
+                    // Shell died on server side
+                    if (event.code === 1011) {
+                        setButtonsState(false);
+                        term.writeln('\r\n\x1b[1;33m[INFO] Shell process terminated. Click Connect to start a new session.\x1b[0m');
+                        return;
+                    }
+                    
+                    // Unexpected close (1005, 1006, etc.) — auto-reconnect
+                    _reconnectAttempts++;
+                    if (_reconnectAttempts <= _maxReconnectAttempts) {
+                        var delay = Math.min(1000 * _reconnectAttempts, 5000);
+                        term.writeln('\r\n\x1b[1;33m[INFO] Connection lost. Reconnecting (' + _reconnectAttempts + '/' + _maxReconnectAttempts + ')...\x1b[0m');
+                        setTimeout(function() {
+                            wsToken = null;
+                            wsUrl = null;
+                            startSession(_lastShellMode);
+                        }, delay);
+                    } else {
+                        setButtonsState(false);
+                        term.writeln('\r\n\x1b[1;31m[ERROR] Connection lost after ' + _maxReconnectAttempts + ' retries. Click Connect to try again.\x1b[0m');
                     }
                 };
                 
             } catch(e) {
                 term.writeln('\r\n[ERROR] Failed to connect WebSocket: ' + String(e));
+            }
+        }
+        
+        function _stopKeepalive() {
+            if (_keepaliveTimer) {
+                clearInterval(_keepaliveTimer);
+                _keepaliveTimer = null;
             }
         }
 
@@ -268,13 +327,15 @@
         }
 
         function closeSession() {
+            _userDisconnected = true;
+            _stopKeepalive();
             // Dispose input handler to prevent ghost writes
             if (_onDataDisposable && typeof _onDataDisposable.dispose === 'function') {
                 _onDataDisposable.dispose();
                 _onDataDisposable = null;
             }
             if (ws) {
-                try { ws.close(); } catch(e) {}
+                try { ws.close(1000, 'user disconnect'); } catch(e) {}
                 ws = null;
             }
             wsToken = null;
