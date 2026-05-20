@@ -101,12 +101,20 @@ def _get_odoo_bin():
 
 def _get_odoo_config():
     """Get current Odoo config file path."""
-    # Get from running Odoo instance
+    # odoo_config.rcfile is always set to the absolute config path
+    try:
+        rcfile = getattr(odoo_config, 'rcfile', None)
+        if rcfile and os.path.isfile(rcfile):
+            return rcfile
+    except Exception:
+        pass
+
+    # Fallback: read from config options dict
     try:
         config_file = odoo_config['config']
         if config_file and os.path.isfile(config_file):
             return config_file
-    except:
+    except Exception:
         pass
     
     # Fallback to common names
