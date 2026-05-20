@@ -523,7 +523,7 @@ class BitconnTerminal(http.Controller):
             _WS_SERVER_TASK = True  # Mark as started
             _start_websocket_server()
     
-    @http.route('/bitconn_webhook/terminal/get_ws_token', type='jsonrpc', auth='user', methods=['POST'], csrf=False)
+    @http.route('/bitconn_webhook/terminal/get_ws_token', type='json', auth='user', methods=['POST'], csrf=False)
     def get_ws_token(self, shell_mode='bash', **kw):
         """Generate WebSocket token for terminal connection."""
         if not WEBSOCKETS_AVAILABLE:
@@ -722,7 +722,7 @@ class BitconnTerminal(http.Controller):
 
         return request.make_response(event_stream(), headers=[('Content-Type', 'text/event-stream')])
 
-    @http.route('/bitconn_webhook/terminal/sessions', type='jsonrpc', auth='user')
+    @http.route('/bitconn_webhook/terminal/sessions', type='json', auth='user')
     def list_sessions(self, **kw):
         # debug endpoint: list active session ids
         try:
@@ -731,7 +731,7 @@ class BitconnTerminal(http.Controller):
             _logger.exception('failed listing sessions')
             return {'error': str(e)}
 
-    @http.route('/bitconn_webhook/terminal/resize/<string:session_id>', type='jsonrpc', auth='user', methods=['POST'], csrf=False)
+    @http.route('/bitconn_webhook/terminal/resize/<string:session_id>', type='json', auth='user', methods=['POST'], csrf=False)
     def resize(self, session_id, **kw):
         sess = SESSIONS.get(session_id)
         if not sess:
@@ -837,7 +837,7 @@ class BitconnTerminal(http.Controller):
             import json as _json
             return request.make_response(_json.dumps({'error': str(e)}), headers=[('Content-Type', 'application/json')], status=500)
 
-    @http.route('/bitconn_webhook/terminal/stop', type='jsonrpc', auth='user')
+    @http.route('/bitconn_webhook/terminal/stop', type='json', auth='user')
     def stop(self, session_id=None, **kw):
         sess = SESSIONS.pop(session_id, None)
         if not sess:
