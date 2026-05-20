@@ -113,6 +113,9 @@
         function showWelcome() {
             try {
                 var banner = '';
+                // Move cursor to top-left and clear entire screen before banner
+                // (term.clear() keeps the current prompt line; this removes it)
+                banner += '\x1b[H\x1b[2J';
                 // ASCII art logo em azul
                 banner += '\x1b[1;34m'
                 banner += '┓ •                        \r\n';
@@ -124,7 +127,6 @@
                 banner += 'Use the \x1b[1;34mConnect\x1b[0m button to connect to bash terminal\r\n';
                 banner += 'Use the \x1b[1;34mShell\x1b[0m button to connect to Odoo shell\r\n\r\n';
                 
-                try { term.writeln(''); } catch (e) {}
                 term.write(banner);
                 try { term.focus(); } catch (e) {}
             } catch (e) {
