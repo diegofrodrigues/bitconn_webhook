@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+
+    <!-- Client action that renders the terminal full-page -->
+    <record id="action_bitconn_terminal" model="ir.actions.client">
+        <field name="name">Terminal</field>
+        <field name="tag">bitconn_terminal</field>
+    </record>
+
+    <!-- Menu entry under Webhooks root -->
+    <menuitem id="menu_bitconn_terminal"
+              name="Terminal"
+              parent="menu_bitconn_webhook_root"
+              action="action_bitconn_terminal"
+              sequence="20"/>
+
+</odoo>

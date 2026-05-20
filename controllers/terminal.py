@@ -21,6 +21,7 @@ import fcntl
 import termios
 import signal
 import shutil
+from urllib.parse import parse_qs, urlparse, unquote
 
 try:
     import websockets
@@ -38,31 +39,50 @@ SESSION_TTL_DEFAULT = 60 * 60  # 1 hour
 _CLEANER_STARTED = False
 _WS_SERVER = None
 _WS_SERVER_TASK = None
-WS_SECRET_KEY = os.getenv('WS_SECRET_KEY', 'change-this-secret-key-in-production')
-WS_HOST = os.getenv('WS_HOST', '127.0.0.1')
-WS_PORT = int(os.getenv('WS_PORT', '8765'))
+
+def _get_ws_config(key, default=None):
+    """Read terminal config from odoo.conf [options] section, fallback to env var."""
+    val = odoo_config.get(key)
+    if val:
+        return val
+    return os.getenv(key.upper().replace('ws_', 'WS_'), default)
+
+_WS_SECRET_KEY_DEFAULT = 'change-this-secret-key-in-production'
+WS_SECRET_KEY = _get_ws_config('ws_secret_key', _WS_SECRET_KEY_DEFAULT)
+WS_HOST = _get_ws_config('ws_host', '127.0.0.1')
+WS_PORT = int(_get_ws_config('ws_port', '8765'))
+
+
+def _is_ws_secret_safe():
+    """Check if the WS secret key was changed from the insecure default."""
+    return WS_SECRET_KEY != _WS_SECRET_KEY_DEFAULT and len(WS_SECRET_KEY) >= 32
 
 
 def _get_odoo_root():
     """Get Odoo root directory dynamically."""
-    # Try to get from odoo module location
     try:
         import odoo
-        odoo_path = os.path.dirname(odoo.__file__)
-        return os.path.dirname(odoo_path)  # Parent of odoo package
-    except:
-        # Fallback to current working directory
-        return os.getcwd()
+        # odoo may be a namespace package (__file__ is None), use __path__ instead
+        odoo_paths = getattr(odoo, '__path__', None)
+        if odoo_paths:
+            # __path__ is e.g. ['/home/.../odoo-19.0/odoo'], parent = project root
+            return os.path.dirname(list(odoo_paths)[0])
+        odoo_file = getattr(odoo, '__file__', None)
+        if odoo_file:
+            return os.path.dirname(os.path.dirname(odoo_file))
+    except Exception:
+        pass
+    # Fallback to current working directory
+    return os.getcwd()
 
 
 def _get_odoo_bin():
     """Find odoo-bin or odoo executable."""
-    # Check common locations
     odoo_root = _get_odoo_root()
     
-    # Try odoo-bin in root
+    # Try odoo-bin in root (doesn't need +x since python runs it)
     odoo_bin = os.path.join(odoo_root, 'odoo-bin')
-    if os.path.isfile(odoo_bin) and os.access(odoo_bin, os.X_OK):
+    if os.path.isfile(odoo_bin):
         return odoo_bin
     
     # Try odoo-bin in PATH
@@ -83,7 +103,7 @@ def _get_odoo_config():
     """Get current Odoo config file path."""
     # Get from running Odoo instance
     try:
-        config_file = odoo_config.rcfile
+        config_file = odoo_config['config']
         if config_file and os.path.isfile(config_file):
             return config_file
     except:
@@ -101,6 +121,46 @@ def _get_working_dir():
     """Get appropriate working directory for shell."""
     # Use Odoo root directory (where odoo-bin is located)
     return _get_odoo_root()
+
+
+def _get_python_exe():
+    """Get Python executable, preferring virtualenv over system Python."""
+    # 1. If VIRTUAL_ENV is set, use it
+    venv = os.environ.get('VIRTUAL_ENV')
+    if venv:
+        venv_python = os.path.join(venv, 'bin', 'python3')
+        if os.path.isfile(venv_python):
+            return venv_python
+
+    # 2. If sys.executable is already in a venv, use it
+    exe = sys.executable
+    bin_dir = os.path.dirname(exe)
+    if os.path.isfile(os.path.join(bin_dir, 'activate')):
+        return exe
+
+    # 3. Look for a venv in the Odoo root directory
+    odoo_root = _get_odoo_root()
+    for venv_name in ('venv', '.venv', 'env'):
+        venv_python = os.path.join(odoo_root, venv_name, 'bin', 'python3')
+        if os.path.isfile(venv_python):
+            return venv_python
+
+    # Fallback to current executable
+    return exe
+
+
+def _ensure_venv_env(env):
+    """Ensure virtualenv paths are properly set in subprocess environment."""
+    exe = _get_python_exe()
+    bin_dir = os.path.dirname(exe)
+    activate = os.path.join(bin_dir, 'activate')
+    if os.path.isfile(activate):
+        venv_root = os.path.dirname(bin_dir)
+        env['VIRTUAL_ENV'] = venv_root
+        path_dirs = env.get('PATH', '').split(':')
+        if bin_dir not in path_dirs:
+            env['PATH'] = bin_dir + ':' + env.get('PATH', '')
+    return env
 
 
 def _verify_token(token):
@@ -133,20 +193,34 @@ def _verify_token(token):
 
 
 async def _read_pty_async(master_fd, websocket, session_id):
-    """Read from PTY and send to WebSocket."""
+    """Read from PTY and send to WebSocket using async fd watching."""
     loop = asyncio.get_event_loop()
+    q = asyncio.Queue()
+
+    def _on_readable():
+        try:
+            data = os.read(master_fd, 4096)
+            if data:
+                q.put_nowait(data)
+            else:
+                q.put_nowait(None)
+        except OSError:
+            q.put_nowait(None)
+
+    loop.add_reader(master_fd, _on_readable)
     try:
         while True:
-            try:
-                data = await loop.run_in_executor(None, os.read, master_fd, 4096)
-                if not data:
-                    break
-                await websocket.send(data)
-            except OSError:
+            data = await q.get()
+            if data is None:
                 break
+            await websocket.send(data)
     except (websockets.exceptions.ConnectionClosed, asyncio.CancelledError):
         pass
     finally:
+        try:
+            loop.remove_reader(master_fd)
+        except Exception:
+            pass
         _logger.info(f"[{session_id}] PTY reader stopped")
 
 
@@ -158,10 +232,20 @@ async def _handle_websocket(websocket, path=None):
     reader_task = None
     
     try:
-        # Parse token from query string (from websocket.request.path or legacy path arg)
-        ws_path = path if path else (websocket.request.path if hasattr(websocket, 'request') else websocket.path)
-        query = dict(param.split('=') for param in ws_path.split('?')[1].split('&') if '=' in param) if '?' in ws_path else {}
-        token = query.get('token', '')
+        # Parse token from query string – works with websockets 10-16 and behind reverse proxy
+        ws_path = path if path else ''
+        if not ws_path:
+            # websockets >= 13: path not passed; use request object
+            if hasattr(websocket, 'request') and hasattr(websocket.request, 'path'):
+                ws_path = websocket.request.path
+            elif hasattr(websocket, 'path'):
+                ws_path = websocket.path
+            else:
+                ws_path = '/'
+        _logger.debug(f"WS handshake path: {ws_path}")
+        parsed = urlparse(ws_path)
+        qs = parse_qs(parsed.query)
+        token = unquote(qs.get('token', [''])[0])
         
         payload = _verify_token(token)
         if not payload:
@@ -192,36 +276,70 @@ async def _handle_websocket(websocket, path=None):
             pass
         
         # Start subprocess
-        python_exe = sys.executable
+        python_exe = _get_python_exe()
         working_dir = _get_working_dir()
         
         if shell_mode == 'odoo':
             # Odoo shell
             odoo_bin = _get_odoo_bin()
+            config_file = _get_odoo_config()
             if odoo_bin:
                 cmd = [python_exe, odoo_bin, 'shell', '--no-http']
-                config_file = _get_odoo_config()
-                if config_file:
-                    cmd.extend(['-c', config_file])
             else:
-                # Fallback: try to run odoo as module
-                cmd = [python_exe, '-m', 'odoo', 'shell', '--no-http']
-                config_file = _get_odoo_config()
-                if config_file:
-                    cmd.extend(['-c', config_file])
+                # Fallback: odoo.cli.main is the correct entry point
+                cmd = [python_exe, '-c', 'import odoo.cli; odoo.cli.main()', 'shell', '--no-http']
+            if config_file:
+                cmd.extend(['-c', config_file])
         else:
-            # Bash shell
-            cmd = ['/bin/bash', '-l']
+            # Bash shell – suppress login banners and user rc files;
+            # a custom PS1 is injected via the environment instead.
+            cmd = ['/bin/bash', '--norc', '--noprofile']
         
         env = os.environ.copy()
+        _ensure_venv_env(env)
         env['TERM'] = 'xterm-256color'
         env.setdefault('COLORTERM', 'truecolor')
+        # Ensure IPython has a writable config dir (avoids warning when $HOME is not writable)
+        home = env.get('HOME', '/tmp')
+        ipython_dir = os.path.join(home, '.ipython')
+        try:
+            os.makedirs(ipython_dir, exist_ok=True)
+        except OSError:
+            # HOME not writable — use /tmp fallback
+            ipython_dir = os.path.join('/tmp', f'.ipython_{user_id}')
+            os.makedirs(ipython_dir, exist_ok=True)
+        env['IPYTHONDIR'] = ipython_dir
+        # Clean prompt matching the welcome banner style
+        env['PS1'] = '\\[\\033[1;34m\\][bitconn]\\[\\033[0m\\]:\\w$ '
         
+        _logger.info(f"[{session_id}] Spawning: {' '.join(cmd)} (python={python_exe}, cwd={working_dir})")
+        
+        # Send loading message for odoo shell (takes 30-60s to start)
+        if shell_mode == 'odoo':
+            await websocket.send(b'\x1b[1;33mStarting Odoo shell, loading modules... please wait.\x1b[0m\r\n')
+
         proc = subprocess.Popen(
             cmd, cwd=working_dir, stdin=slave_fd, stdout=slave_fd, stderr=slave_fd,
             close_fds=True, env=env, preexec_fn=os.setsid
         )
         os.close(slave_fd)
+        slave_fd = -1
+        
+        # Check if process died immediately (e.g. missing deps, bad config)
+        check_delay = 2.0 if shell_mode == 'odoo' else 0.5
+        await asyncio.sleep(check_delay)
+        if proc.poll() is not None:
+            _logger.error(f"[{session_id}] Shell died immediately, exit code={proc.returncode}")
+            try:
+                import select
+                if select.select([master_fd], [], [], 0.2)[0]:
+                    error_data = os.read(master_fd, 8192)
+                    await websocket.send(error_data)
+                    _logger.error(f"[{session_id}] Shell stderr: {error_data[:500]}")
+            except Exception:
+                pass
+            await websocket.close(1011, f'Shell died (exit code {proc.returncode})')
+            return
         
         WS_SESSIONS[session_id] = {
             'proc': proc,
@@ -257,13 +375,22 @@ async def _handle_websocket(websocket, path=None):
     except Exception as e:
         _logger.exception(f"[{session_id}] Error: {e}")
     finally:
+        # 1. Cancel reader task first (add_reader-based, cancels instantly at await q.get)
         if reader_task:
             reader_task.cancel()
             try:
                 await reader_task
-            except asyncio.CancelledError:
+            except (asyncio.CancelledError, Exception):
                 pass
         
+        # 2. Close master_fd (after reader removed its add_reader hook)
+        if master_fd is not None:
+            try:
+                os.close(master_fd)
+            except Exception:
+                pass
+        
+        # 3. Kill shell process
         if proc and proc.poll() is None:
             try:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
@@ -274,15 +401,15 @@ async def _handle_websocket(websocket, path=None):
                 except Exception:
                     pass
         
-        if master_fd is not None:
-            try:
-                os.close(master_fd)
-            except Exception:
-                pass
+        # 4. Close websocket with proper code
+        try:
+            await websocket.close(1011, 'Shell process ended')
+        except Exception:
+            pass
         
-        if session_id in WS_SESSIONS:
+        if session_id and session_id in WS_SESSIONS:
             del WS_SESSIONS[session_id]
-            _logger.info(f"[{session_id}] Cleaned up")
+        _logger.info(f"[{session_id}] Cleaned up")
 
 
 def _start_websocket_server():
@@ -290,7 +417,14 @@ def _start_websocket_server():
     if not WEBSOCKETS_AVAILABLE:
         _logger.warning('WebSocket server not started: websockets library not available')
         return
-    
+
+    if not _is_ws_secret_safe():
+        _logger.critical(
+            'WebSocket terminal DISABLED: ws_secret_key is insecure. '
+            'Set a unique key (>= 32 chars) in odoo.conf [options] ws_secret_key = ...'
+        )
+        return
+
     global _WS_SERVER, _WS_SERVER_TASK
     
     def run_server():
@@ -303,8 +437,10 @@ def _start_websocket_server():
                 _handle_websocket,
                 WS_HOST,
                 WS_PORT,
-                ping_interval=20,
-                ping_timeout=10
+                ping_interval=30,
+                ping_timeout=20,
+                close_timeout=5,
+                max_size=2**20,
             )
             _logger.info(f"WebSocket terminal server started on {WS_HOST}:{WS_PORT}")
             await asyncio.Future()
@@ -313,6 +449,12 @@ def _start_websocket_server():
             loop.run_until_complete(serve())
         except Exception as e:
             _logger.exception(f"WebSocket server error: {e}")
+            # Attempt restart after crash
+            time.sleep(2)
+            try:
+                loop.run_until_complete(serve())
+            except Exception:
+                _logger.critical("WebSocket server failed to restart")
     
     thread = threading.Thread(target=run_server, daemon=True)
     thread.start()
@@ -381,12 +523,16 @@ class BitconnTerminal(http.Controller):
             _WS_SERVER_TASK = True  # Mark as started
             _start_websocket_server()
     
-    @http.route('/bitconn_webhook/terminal/get_ws_token', type='json', auth='user', methods=['POST'], csrf=False)
+    @http.route('/bitconn_webhook/terminal/get_ws_token', type='jsonrpc', auth='user', methods=['POST'], csrf=False)
     def get_ws_token(self, shell_mode='bash', **kw):
         """Generate WebSocket token for terminal connection."""
         if not WEBSOCKETS_AVAILABLE:
             return {'error': 'WebSocket not available. Install websockets: pip install websockets'}
-        
+
+        if not _is_ws_secret_safe():
+            return {'error': 'WebSocket terminal disabled: ws_secret_key not configured. '
+                             'Set a secure key (>= 32 chars) in odoo.conf.'}
+
         try:
             user_id = request.env.uid
             ttl = int(kw.get('ttl', SESSION_TTL_DEFAULT))
@@ -407,7 +553,17 @@ class BitconnTerminal(http.Controller):
             ).hexdigest()
             
             token = f"{payload_b64}.{signature}"
-            ws_url = f"ws://{WS_HOST}:{WS_PORT}"
+
+            # Detect if request came via HTTPS (direct or behind reverse proxy)
+            scheme = request.httprequest.scheme  # respects X-Forwarded-Proto
+            ws_public_url = _get_ws_config('ws_public_url', '')
+            if ws_public_url:
+                # Explicit public URL (e.g. wss://example.com/ws/terminal)
+                ws_url = ws_public_url
+            elif scheme == 'https':
+                ws_url = f"wss://{request.httprequest.host}/ws/terminal"
+            else:
+                ws_url = f"ws://{WS_HOST}:{WS_PORT}"
             
             return {
                 'ok': True,
@@ -426,20 +582,19 @@ class BitconnTerminal(http.Controller):
             session_id = str(uuid.uuid4())
             master, slave = pty.openpty()
             # Build command dynamically
+            python_exe = _get_python_exe()
             odoo_bin = _get_odoo_bin()
+            config_file = _get_odoo_config()
             if odoo_bin:
-                cmd = [sys.executable, odoo_bin, 'shell', '--no-http']
-                config_file = _get_odoo_config()
-                if config_file:
-                    cmd.extend(['-c', config_file])
+                cmd = [python_exe, odoo_bin, 'shell', '--no-http']
             else:
-                # Fallback: try to run odoo as module
-                cmd = [sys.executable, '-m', 'odoo', 'shell', '--no-http']
-                config_file = _get_odoo_config()
-                if config_file:
-                    cmd.extend(['-c', config_file])
+                # Fallback: odoo.cli.main is the correct entry point
+                cmd = [python_exe, '-c', 'import odoo.cli; odoo.cli.main()', 'shell', '--no-http']
+            if config_file:
+                cmd.extend(['-c', config_file])
             
             env = os.environ.copy()
+            _ensure_venv_env(env)
             env['TERM'] = env.get('TERM', 'xterm-256color')
             env.setdefault('COLORTERM', 'truecolor')
             # set initial window size if provided by client
@@ -567,7 +722,7 @@ class BitconnTerminal(http.Controller):
 
         return request.make_response(event_stream(), headers=[('Content-Type', 'text/event-stream')])
 
-    @http.route('/bitconn_webhook/terminal/sessions', type='json', auth='user')
+    @http.route('/bitconn_webhook/terminal/sessions', type='jsonrpc', auth='user')
     def list_sessions(self, **kw):
         # debug endpoint: list active session ids
         try:
@@ -576,7 +731,7 @@ class BitconnTerminal(http.Controller):
             _logger.exception('failed listing sessions')
             return {'error': str(e)}
 
-    @http.route('/bitconn_webhook/terminal/resize/<string:session_id>', type='json', auth='user', methods=['POST'], csrf=False)
+    @http.route('/bitconn_webhook/terminal/resize/<string:session_id>', type='jsonrpc', auth='user', methods=['POST'], csrf=False)
     def resize(self, session_id, **kw):
         sess = SESSIONS.get(session_id)
         if not sess:
@@ -682,7 +837,7 @@ class BitconnTerminal(http.Controller):
             import json as _json
             return request.make_response(_json.dumps({'error': str(e)}), headers=[('Content-Type', 'application/json')], status=500)
 
-    @http.route('/bitconn_webhook/terminal/stop', type='json', auth='user')
+    @http.route('/bitconn_webhook/terminal/stop', type='jsonrpc', auth='user')
     def stop(self, session_id=None, **kw):
         sess = SESSIONS.pop(session_id, None)
         if not sess:
