@@ -249,11 +249,8 @@
                     }
                     ws = null;
                     
-                    // If user clicked Disconnect, just reset
+                    // If user clicked Disconnect, resetTerminal() already handled clear+welcome
                     if (_userDisconnected) {
-                        setButtonsState(false);
-                        term.clear();
-                        showWelcome();
                         return;
                     }
                     
