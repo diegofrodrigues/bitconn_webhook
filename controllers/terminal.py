@@ -283,6 +283,7 @@ async def _handle_websocket(websocket, path=None):
             # Odoo shell
             odoo_bin = _get_odoo_bin()
             config_file = _get_odoo_config()
+            db_name = odoo_config.get('db_name') or ''
             if odoo_bin:
                 cmd = [python_exe, odoo_bin, 'shell', '--no-http']
             else:
@@ -290,6 +291,8 @@ async def _handle_websocket(websocket, path=None):
                 cmd = [python_exe, '-c', 'import odoo.cli; odoo.cli.main()', 'shell', '--no-http']
             if config_file:
                 cmd.extend(['-c', config_file])
+            if db_name:
+                cmd.extend(['-d', db_name])
         else:
             # Bash shell – suppress login banners and user rc files;
             # a custom PS1 is injected via the environment instead.
