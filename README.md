@@ -305,9 +305,15 @@ server {
         proxy_pass http://ws_terminal;
         proxy_http_version 1.1;
         proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection "upgrade";
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Real-IP $remote_addr;
         proxy_read_timeout  3600s;
         proxy_send_timeout  3600s;
+        proxy_buffering off;
+        proxy_cache off;
     }
 
     # Odoo longpolling
@@ -341,7 +347,7 @@ server {
 ```ini
 [options]
 proxy_mode = True
-ws_host = 0.0.0.0
+ws_host = 120.0.0.1
 ws_port = 8765
 ws_secret_key = your-secret-key-min-32-chars-change-me
 ; Optional: override auto-detected WS URL (useful for non-standard setups)
