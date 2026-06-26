@@ -20,7 +20,7 @@ Security:
 
 See README.md for full documentation & examples (n8n workflows, advanced specs, troubleshooting).
 """,
-    'version': '19.0.1.4.0',
+    'version': '19.0.1.5.0',
     'category': 'Tools',
     'author': 'Bitconn Technology',
     'website': 'https://bitconn.com.br',
@@ -31,6 +31,7 @@ See README.md for full documentation & examples (n8n workflows, advanced specs, 
         'views/terminal_views.xml',
         'views/server_action_views.xml',
         'views/ir_actions_server_views.xml',
+        'views/code_history_views.xml',
     ],
     'assets': {
         'web.assets_backend': [

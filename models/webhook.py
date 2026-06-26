@@ -427,8 +427,10 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
     def create(self, vals_list):
         recs = super().create(vals_list)
         base_url = self.env['ir.config_parameter'].sudo().get_param('web.base.url', 'http://localhost:8069')
+        history_vals = []
         for rec in recs:
-            # single write so custom masked logging captures both secret & url
+            if rec.python_code:
+                history_vals.append({'webhook_id': rec.id, 'code': rec.python_code})
             updates = {}
             if not rec.secret_key:
                 updates['secret_key'] = secrets.token_urlsafe(32)
@@ -436,6 +438,8 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
                 updates['webhook_uuid'] = str(uuid.uuid4())
             if updates:
                 rec.write(updates)
+        if history_vals:
+            self.env['bitconn.webhook.code.history'].create(history_vals)
         return recs
 
     def action_regenerate_credentials(self):
@@ -1431,6 +1435,29 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
         
         return result
 
+    show_python_code_history = fields.Boolean(
+        compute='_compute_show_python_code_history'
+    )
+
+    def _compute_show_python_code_history(self):
+        History = self.env['bitconn.webhook.code.history']
+        for wh in self:
+            wh.show_python_code_history = History.search_count([
+                ('webhook_id', '=', wh.id),
+                ('code', '!=', wh.python_code),
+            ]) > 0
+
+    def action_python_code_history(self):
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Python Code History'),
+            'target': 'new',
+            'views': [(False, 'form')],
+            'res_model': 'bitconn.webhook.code.history.wizard',
+            'context': {'default_webhook_id': self.id},
+        }
+
     # Masked tracking for sensitive fields
     def write(self, vals):
         # Capture originals for fields of interest
@@ -1444,6 +1471,14 @@ result = {'ok': True, 'message': 'Code executed successfully'}"""
             }
             for rec in self
         }
+        # Snapshot historico do python_code antes de alterar
+        if 'python_code' in vals and vals.get('python_code'):
+            for rec in self:
+                if rec.python_code and rec.python_code != vals['python_code']:
+                    self.env['bitconn.webhook.code.history'].create({
+                        'webhook_id': rec.id,
+                        'code': rec.python_code,
+                    })
         res = super().write(vals)
         
         # Archive/Unarchive automation rules when outbound is disabled/enabled

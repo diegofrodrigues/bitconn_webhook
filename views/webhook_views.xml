@@ -57,6 +57,9 @@
   <form>
           <header>
             <button name="%(bitconn_webhook_donate_modal_action)d" type="action" string="Donate" class="btn-donate" icon="fa-money"/>
+            <button name="action_python_code_history" string="Code History" type="object"
+                    invisible="not show_python_code_history"
+                    help="View Python code history and restore a previous version"/>
             <style>
               .btn-donate {
                 animation: bounce 1s ease 0s 5;
