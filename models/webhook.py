@@ -15,6 +15,7 @@ class BitconnWebhook(models.Model):
     _inherit = ['mail.thread', 'mail.activity.mixin']
 
     name = fields.Char(required=True, default=lambda self: _('Webhook'), tracking=True)
+    description = fields.Text(string='Description', help='Internal description for this webhook')
     user_id = fields.Many2one('res.users', string='User', required=True, help='User used to perform operations via webhook.', tracking=True)
     can_create = fields.Boolean(string='Can Create', default=True, tracking=True)
     can_write = fields.Boolean(string='Can Write', default=True, tracking=True)
@@ -109,6 +110,38 @@ class BitconnWebhook(models.Model):
         help='Automation rules that will trigger using this webhook',
         context={'active_test': False}
     )
+    # Execution logs
+    execution_log_ids = fields.One2many(
+        'bitconn.webhook.execution.log', 'webhook_id',
+        string='Execution Logs',
+        help='Inbound and outbound execution history for this webhook.',
+    )
+
+    def _create_execution_log(self, direction, state, input_data=None, execution_data=None,
+                              output_data=None, error_message=None, http_method=None,
+                              http_status=None, model_name=None, method=None,
+                              server_action_id=None, duration=None):
+        self.ensure_one()
+        try:
+            self.env['bitconn.webhook.execution.log'].sudo().create({
+                'webhook_id': self.id,
+                'server_action_id': server_action_id,
+                'direction': direction,
+                'state': state,
+                'input_data': str(input_data)[:10000] if input_data else None,
+                'execution_data': str(execution_data)[:10000] if execution_data else None,
+                'output_data': str(output_data)[:10000] if output_data else None,
+                'error_message': str(error_message)[:5000] if error_message else None,
+                'http_method': http_method,
+                'http_status': http_status,
+                'model_name': model_name,
+                'method': method,
+                'execution_date': fields.Datetime.now(),
+                'duration': duration,
+            })
+        except Exception as e:
+            _logger.warning('Failed to create execution log: %s', e)
+
     # Help examples (JSON with common payloads)
     examples_help = fields.Text(
         string='Examples Help (JSON)',

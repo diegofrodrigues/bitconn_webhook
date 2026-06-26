@@ -1,5 +1,7 @@
 id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
 access_bitconn_webhook_user,access.bitconn.webhook.user,model_bitconn_webhook,base.group_user,1,1,1,1
+access_bitconn_execution_log_user,access.bitconn.webhook.execution.log.user,model_bitconn_webhook_execution_log,base.group_user,1,0,0,0
+access_bitconn_config_settings_user,access.bitconn.webhook.config.settings.user,model_bitconn_webhook_config_settings,base.group_user,1,1,1,1
 access_bitconn_code_history,access.bitconn.code.history,model_bitconn_code_history,base.group_user,1,0,1,0
 access_bitconn_code_history_wizard,access.bitconn.code.history.wizard,model_bitconn_code_history_wizard,base.group_user,1,0,1,0
 access_bitconn_webhook_code_history,access.bitconn.webhook.code.history,model_bitconn_webhook_code_history,base.group_user,1,0,1,0

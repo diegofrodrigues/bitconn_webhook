@@ -32,6 +32,8 @@ See README.md for full documentation & examples (n8n workflows, advanced specs, 
         'views/server_action_views.xml',
         'views/ir_actions_server_views.xml',
         'views/code_history_views.xml',
+        'views/execution_log_views.xml',
+        'views/res_config_settings_views.xml',
     ],
     'assets': {
         'web.assets_backend': [

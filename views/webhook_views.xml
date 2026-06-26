@@ -78,6 +78,7 @@
           <sheet>
             <group col="2">
               <field name="name"/>
+              <field name="description" placeholder="Describe what this webhook is used for..."/>
               <field name="user_id" options="{'no_create': True, 'no_open': True}"/>
               <field name="can_create" invisible="can_code == True"/>
               <field name="can_write" invisible="can_code == True"/>
@@ -261,6 +262,46 @@
                   <label for="outbound_test_result" string="Test Result" class="o_form_label"/>
                   <field name="outbound_test_result" nolabel="1" widget="code" options="{'mode': 'javascript','lang': 'json', 'lineWrapping': true, 'lineNumbers': true, 'readonly': true}" readonly="1"/>
                 </group>
+              </page>
+              <page string="Log">
+                <field name="execution_log_ids" nolabel="1">
+                  <list>
+                    <field name="direction" widget="badge" decoration-success="direction == 'inbound'" decoration-info="direction == 'outbound'"/>
+                    <field name="state" widget="badge" decoration-success="state == 'success'" decoration-danger="state == 'error'"/>
+                    <field name="http_method"/>
+                    <field name="model_name"/>
+                    <field name="method"/>
+                    <field name="execution_date"/>
+                    <field name="duration" optional="show"/>
+                  </list>
+                  <form>
+                    <group>
+                      <group>
+                        <field name="direction" widget="badge" decoration-success="direction == 'inbound'" decoration-info="direction == 'outbound'"/>
+                        <field name="state" widget="badge" decoration-success="state == 'success'" decoration-danger="state == 'error'"/>
+                      </group>
+                      <group>
+                        <field name="execution_date"/>
+                        <field name="duration"/>
+                        <field name="http_method"/>
+                        <field name="http_status"/>
+                      </group>
+                    </group>
+                    <group>
+                      <field name="model_name"/>
+                      <field name="method"/>
+                      <field name="server_action_id"/>
+                    </group>
+                    <separator string="Input"/>
+                    <field name="input_data" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'readonly': true}"/>
+                    <separator string="Execution"/>
+                    <field name="execution_data" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'readonly': true}"/>
+                    <separator string="Output"/>
+                    <field name="output_data" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'readonly': true}"/>
+                    <separator string="Error" invisible="state != 'error'"/>
+                    <field name="error_message" nolabel="1" invisible="state != 'error'"/>
+                  </form>
+                </field>
               </page>
               <page string="Help">
                 <group>
