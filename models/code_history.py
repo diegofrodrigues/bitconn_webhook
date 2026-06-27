@@ -14,6 +14,7 @@ class BitconnCodeHistory(models.Model):
     _name = 'bitconn.code.history'
     _description = 'Bitconn Code History (Server Actions)'
     _order = 'create_date desc, id desc'
+    _rec_name = 'display_name'
     _max_entries_per_action = 100
 
     action_id = fields.Many2one('ir.actions.server', required=True, ondelete='cascade')
@@ -119,6 +120,7 @@ class BitconnWebhookCodeHistory(models.Model):
     _name = 'bitconn.webhook.code.history'
     _description = 'Bitconn Webhook Python Code History'
     _order = 'create_date desc, id desc'
+    _rec_name = 'display_name'
     _max_entries_per_webhook = 100
 
     webhook_id = fields.Many2one('bitconn.webhook', required=True, ondelete='cascade')
