@@ -366,9 +366,11 @@
                                 if (rd.error) {
                                     term.writeln('\x1b[1;31m[ERROR] ' + rd.error + '\x1b[0m');
                                 } else {
+                                    _bitconnPasswd = newPwd;
+                                    wsToken = rd.token;
+                                    wsUrl = rd.ws_url;
                                     _countdownThen(3, '\x1b[1;32m[SETUP] Password configured\x1b[0m', function() {
-                                        _bitconnPasswd = newPwd;
-                                        doConnect(newPwd);
+                                        connectWebSocket();
                                     }, 'Connecting in');
                                 }
                             });
@@ -455,9 +457,11 @@
                                 if (rd.error) {
                                     term.writeln('\x1b[1;31m[ERROR] ' + rd.error + '\x1b[0m');
                                 } else {
+                                    _bitconnPasswd = newPwd;
+                                    wsToken = rd.token;
+                                    wsUrl = rd.ws_url;
                                     _countdownThen(3, '\x1b[1;32m[SETUP] Password configured\x1b[0m', function() {
-                                        _bitconnPasswd = newPwd;
-                                        doConnect(newPwd);
+                                        connectWebSocket();
                                     }, 'Connecting in');
                                 }
                             });

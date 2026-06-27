@@ -553,6 +553,43 @@ class BitconnTerminal(http.Controller):
             _WS_SERVER_TASK = True  # Mark as started
             _start_websocket_server()
     
+    def _generate_ws_token(self, shell_mode='bash', ttl=None):
+        """Generate WebSocket token for the current user."""
+        user_id = request.env.uid
+        ttl = ttl or SESSION_TTL_DEFAULT
+        exp = int(time.time()) + ttl
+
+        payload = {
+            'user_id': user_id,
+            'exp': exp,
+            'shell_mode': shell_mode
+        }
+        payload_json = json.dumps(payload)
+        payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
+
+        signature = hmac.new(
+            WS_SECRET_KEY.encode(),
+            payload_b64.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        token = f"{payload_b64}.{signature}"
+
+        scheme = request.httprequest.scheme
+        ws_public_url = _get_ws_config('bitconn_ws_public_url', '')
+        if ws_public_url:
+            ws_url = ws_public_url
+        elif scheme == 'https':
+            ws_url = f"wss://{request.httprequest.host}/bitconn/ws/terminal"
+        else:
+            ws_url = f"ws://{WS_HOST}:{WS_PORT}"
+
+        return {
+            'token': token,
+            'ws_url': ws_url,
+            'expires_at': exp
+        }
+
     @http.route('/bitconn_webhook/terminal/get_ws_token', type='jsonrpc', auth='user', methods=['POST'], csrf=False)
     def get_ws_token(self, shell_mode='bash', master_pwd=None, **kw):
         """Generate WebSocket token for terminal connection."""
@@ -571,43 +608,8 @@ class BitconnTerminal(http.Controller):
             return {'error': 'invalid_bitconn_passwd'}
 
         try:
-            user_id = request.env.uid
-            ttl = int(kw.get('ttl', SESSION_TTL_DEFAULT))
-            exp = int(time.time()) + ttl
-            
-            payload = {
-                'user_id': user_id,
-                'exp': exp,
-                'shell_mode': shell_mode  # 'bash' or 'odoo'
-            }
-            payload_json = json.dumps(payload)
-            payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
-            
-            signature = hmac.new(
-                WS_SECRET_KEY.encode(),
-                payload_b64.encode(),
-                hashlib.sha256
-            ).hexdigest()
-            
-            token = f"{payload_b64}.{signature}"
-
-            # Detect if request came via HTTPS (direct or behind reverse proxy)
-            scheme = request.httprequest.scheme  # respects X-Forwarded-Proto
-            ws_public_url = _get_ws_config('bitconn_ws_public_url', '')
-            if ws_public_url:
-                # Explicit public URL (e.g. wss://example.com/bitconn/ws/terminal)
-                ws_url = ws_public_url
-            elif scheme == 'https':
-                ws_url = f"wss://{request.httprequest.host}/bitconn/ws/terminal"
-            else:
-                ws_url = f"ws://{WS_HOST}:{WS_PORT}"
-            
-            return {
-                'ok': True,
-                'token': token,
-                'ws_url': ws_url,
-                'expires_at': exp
-            }
+            result = self._generate_ws_token(shell_mode, kw.get('ttl'))
+            return {'ok': True, **result}
         except Exception as e:
             _logger.exception('Failed to generate WS token')
             return {'error': str(e)}
@@ -917,7 +919,8 @@ class BitconnTerminal(http.Controller):
             return {'error': 'Must contain a special character'}
         try:
             hashed = _save_bitconn_passwd_to_config(new_password)
-            return {'ok': True, 'message': 'Terminal password configured successfully'}
+            result = self._generate_ws_token()
+            return {'ok': True, 'message': 'Terminal password configured successfully', **result}
         except Exception as e:
             _logger.exception('Failed to set bitconn_passwd')
             return {'error': str(e)}
