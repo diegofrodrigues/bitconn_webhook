@@ -46,12 +46,12 @@ def _get_ws_config(key, default=None):
     val = odoo_config.get(key)
     if val:
         return val
-    return os.getenv(key.upper().replace('ws_', 'WS_'), default)
+    return os.getenv(key.upper(), default)
 
 _WS_SECRET_KEY_DEFAULT = 'change-this-secret-key-in-production'
-WS_SECRET_KEY = _get_ws_config('ws_secret_key', _WS_SECRET_KEY_DEFAULT)
-WS_HOST = _get_ws_config('ws_host', '127.0.0.1')
-WS_PORT = int(_get_ws_config('ws_port', '8765'))
+WS_SECRET_KEY = _get_ws_config('bitconn_ws_secret_key', _WS_SECRET_KEY_DEFAULT)
+WS_HOST = _get_ws_config('bitconn_ws_host', '127.0.0.1')
+WS_PORT = int(_get_ws_config('bitconn_ws_port', '8765'))
 
 def _get_bitconn_passwd():
     return odoo_config.get('bitconn_passwd', '') or ''
@@ -450,8 +450,8 @@ def _start_websocket_server():
 
     if not _is_ws_secret_safe():
         _logger.critical(
-            'WebSocket terminal DISABLED: ws_secret_key is insecure. '
-            'Set a unique key (>= 32 chars) in odoo.conf [options] ws_secret_key = ...'
+            'WebSocket terminal DISABLED: bitconn_ws_secret_key is insecure. '
+            'Set a unique key (>= 32 chars) in odoo.conf [options] bitconn_ws_secret_key = ...'
         )
         return
 
@@ -560,7 +560,7 @@ class BitconnTerminal(http.Controller):
             return {'error': 'WebSocket not available. Install websockets: pip install websockets'}
 
         if not _is_ws_secret_safe():
-            return {'error': 'WebSocket terminal disabled: ws_secret_key not configured. '
+            return {'error': 'WebSocket terminal disabled: bitconn_ws_secret_key not configured. '
                              'Set a secure key (>= 32 chars) in odoo.conf.'}
 
         if not _is_bitconn_passwd_configured():
@@ -593,12 +593,12 @@ class BitconnTerminal(http.Controller):
 
             # Detect if request came via HTTPS (direct or behind reverse proxy)
             scheme = request.httprequest.scheme  # respects X-Forwarded-Proto
-            ws_public_url = _get_ws_config('ws_public_url', '')
+            ws_public_url = _get_ws_config('bitconn_ws_public_url', '')
             if ws_public_url:
-                # Explicit public URL (e.g. wss://example.com/ws/terminal)
+                # Explicit public URL (e.g. wss://example.com/bitconn/ws/terminal)
                 ws_url = ws_public_url
             elif scheme == 'https':
-                ws_url = f"wss://{request.httprequest.host}/ws/terminal"
+                ws_url = f"wss://{request.httprequest.host}/bitconn/ws/terminal"
             else:
                 ws_url = f"ws://{WS_HOST}:{WS_PORT}"
             
