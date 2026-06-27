@@ -1,6 +1,7 @@
 from odoo import http
 from odoo.http import request
 from odoo.tools import config as odoo_config
+from odoo.tools.config import crypt_context
 import os
 import pty
 import subprocess
@@ -45,12 +46,45 @@ def _get_ws_config(key, default=None):
     val = odoo_config.get(key)
     if val:
         return val
-    return os.getenv(key.upper().replace('ws_', 'WS_'), default)
+    return os.getenv(key.upper(), default)
 
 _WS_SECRET_KEY_DEFAULT = 'change-this-secret-key-in-production'
-WS_SECRET_KEY = _get_ws_config('ws_secret_key', _WS_SECRET_KEY_DEFAULT)
-WS_HOST = _get_ws_config('ws_host', '127.0.0.1')
-WS_PORT = int(_get_ws_config('ws_port', '8765'))
+WS_SECRET_KEY = _get_ws_config('bitconn_ws_secret_key', _WS_SECRET_KEY_DEFAULT)
+WS_HOST = _get_ws_config('bitconn_ws_host', '127.0.0.1')
+WS_PORT = int(_get_ws_config('bitconn_ws_port', '8765'))
+
+def _get_bitconn_passwd():
+    return odoo_config.get('bitconn_passwd', '') or ''
+
+def _is_bitconn_passwd_configured():
+    stored = _get_bitconn_passwd()
+    if not stored:
+        return False
+    try:
+        scheme = crypt_context.identify(stored)
+        return scheme is not None and scheme != 'plaintext'
+    except Exception:
+        return False
+
+def _verify_bitconn_passwd(password):
+    stored = _get_bitconn_passwd()
+    if not stored:
+        return False
+    try:
+        result, updated_hash = crypt_context.verify_and_update(password, stored)
+        if updated_hash:
+            odoo_config['bitconn_passwd'] = updated_hash
+            odoo_config.save(['bitconn_passwd'])
+        return result
+    except Exception:
+        _logger.warning('bitconn_passwd in config is not a valid hash (possibly plain text)')
+        return False
+
+def _save_bitconn_passwd_to_config(new_password):
+    hashed = crypt_context.hash(new_password)
+    odoo_config['bitconn_passwd'] = hashed
+    odoo_config.save(['bitconn_passwd'])
+    return hashed
 
 
 def _is_ws_secret_safe():
@@ -431,8 +465,8 @@ def _start_websocket_server():
 
     if not _is_ws_secret_safe():
         _logger.critical(
-            'WebSocket terminal DISABLED: ws_secret_key is insecure. '
-            'Set a unique key (>= 32 chars) in odoo.conf [options] ws_secret_key = ...'
+            'WebSocket terminal DISABLED: bitconn_ws_secret_key is insecure. '
+            'Set a unique key (>= 32 chars) in odoo.conf [options] bitconn_ws_secret_key = ...'
         )
         return
 
@@ -534,61 +568,81 @@ class BitconnTerminal(http.Controller):
             _WS_SERVER_TASK = True  # Mark as started
             _start_websocket_server()
     
+    def _generate_ws_token(self, shell_mode='bash', ttl=None):
+        """Generate WebSocket token for the current user."""
+        user_id = request.env.uid
+        ttl = ttl or SESSION_TTL_DEFAULT
+        exp = int(time.time()) + ttl
+
+        payload = {
+            'user_id': user_id,
+            'exp': exp,
+            'shell_mode': shell_mode
+        }
+        payload_json = json.dumps(payload)
+        payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
+
+        signature = hmac.new(
+            WS_SECRET_KEY.encode(),
+            payload_b64.encode(),
+            hashlib.sha256
+        ).hexdigest()
+
+        token = f"{payload_b64}.{signature}"
+
+        scheme = request.httprequest.scheme
+        ws_public_url = _get_ws_config('bitconn_ws_public_url', '')
+        if ws_public_url:
+            ws_url = ws_public_url
+        elif scheme == 'https':
+            ws_url = f"wss://{request.httprequest.host}/bitconn/ws/terminal"
+        else:
+            ws_url = f"ws://{WS_HOST}:{WS_PORT}"
+
+        return {
+            'token': token,
+            'ws_url': ws_url,
+            'expires_at': exp
+        }
+
     @http.route('/bitconn_webhook/terminal/get_ws_token', type='json', auth='user', methods=['POST'], csrf=False)
-    def get_ws_token(self, shell_mode='bash', **kw):
+    def get_ws_token(self, shell_mode='bash', master_pwd=None, **kw):
         """Generate WebSocket token for terminal connection."""
         if not WEBSOCKETS_AVAILABLE:
             return {'error': 'WebSocket not available. Install websockets: pip install websockets'}
 
         if not _is_ws_secret_safe():
-            return {'error': 'WebSocket terminal disabled: ws_secret_key not configured. '
+            return {'error': 'WebSocket terminal disabled: bitconn_ws_secret_key not configured. '
                              'Set a secure key (>= 32 chars) in odoo.conf.'}
 
-        try:
-            user_id = request.env.uid
-            ttl = int(kw.get('ttl', SESSION_TTL_DEFAULT))
-            exp = int(time.time()) + ttl
-            
-            payload = {
-                'user_id': user_id,
-                'exp': exp,
-                'shell_mode': shell_mode  # 'bash' or 'odoo'
-            }
-            payload_json = json.dumps(payload)
-            payload_b64 = base64.urlsafe_b64encode(payload_json.encode()).decode().rstrip('=')
-            
-            signature = hmac.new(
-                WS_SECRET_KEY.encode(),
-                payload_b64.encode(),
-                hashlib.sha256
-            ).hexdigest()
-            
-            token = f"{payload_b64}.{signature}"
+        if not _is_bitconn_passwd_configured():
+            return {'error': 'bitconn_passwd_not_configured',
+                    'message': 'Terminal password not configured.'}
 
-            # Detect if request came via HTTPS (direct or behind reverse proxy)
-            scheme = request.httprequest.scheme  # respects X-Forwarded-Proto
-            ws_public_url = _get_ws_config('ws_public_url', '')
-            if ws_public_url:
-                # Explicit public URL (e.g. wss://example.com/ws/terminal)
-                ws_url = ws_public_url
-            elif scheme == 'https':
-                ws_url = f"wss://{request.httprequest.host}/ws/terminal"
-            else:
-                ws_url = f"ws://{WS_HOST}:{WS_PORT}"
-            
-            return {
-                'ok': True,
-                'token': token,
-                'ws_url': ws_url,
-                'expires_at': exp
-            }
+        if not master_pwd or not _verify_bitconn_passwd(master_pwd):
+            return {'error': 'invalid_bitconn_passwd'}
+
+        try:
+            result = self._generate_ws_token(shell_mode, kw.get('ttl'))
+            return {'ok': True, **result}
         except Exception as e:
             _logger.exception('Failed to generate WS token')
             return {'error': str(e)}
     
     @http.route('/bitconn_webhook/terminal/start', type='http', auth='user', methods=['POST'], csrf=False)
-    def start(self, **kw):
+    def start(self, master_pwd=None, **kw):
         # Return JSON response; requires authenticated user so SSE stream can reuse same session
+        if not _is_bitconn_passwd_configured():
+            return request.make_response(
+                json.dumps({'error': 'bitconn_passwd_not_configured',
+                           'message': 'Terminal password not configured.'}),
+                headers=[('Content-Type', 'application/json')], status=403)
+
+        if not master_pwd or not _verify_bitconn_passwd(master_pwd):
+            return request.make_response(
+                json.dumps({'error': 'invalid_bitconn_passwd'}),
+                headers=[('Content-Type', 'application/json')], status=403)
+
         try:
             session_id = str(uuid.uuid4())
             master, slave = pty.openpty()
@@ -864,3 +918,24 @@ class BitconnTerminal(http.Controller):
         except Exception:
             pass
         return {'ok': True}
+
+    @http.route('/bitconn_webhook/terminal/set_password', type='json', auth='user', methods=['POST'], csrf=False)
+    def set_password(self, new_password=None, **kw):
+        import re
+        if not new_password or len(new_password) < 8:
+            return {'error': 'Minimum 8 characters'}
+        if not re.search(r'[A-Z]', new_password):
+            return {'error': 'Must contain uppercase letter'}
+        if not re.search(r'[a-z]', new_password):
+            return {'error': 'Must contain lowercase letter'}
+        if not re.search(r'[0-9]', new_password):
+            return {'error': 'Must contain a number'}
+        if not re.search(r'[$@$!%*#?&()_\-+=.,:;]', new_password):
+            return {'error': 'Must contain a special character'}
+        try:
+            hashed = _save_bitconn_passwd_to_config(new_password)
+            result = self._generate_ws_token()
+            return {'ok': True, 'message': 'Terminal password configured successfully', **result}
+        except Exception as e:
+            _logger.exception('Failed to set bitconn_passwd')
+            return {'error': str(e)}

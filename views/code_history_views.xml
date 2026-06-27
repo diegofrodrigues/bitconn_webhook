@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+
+    <!-- Wizard form for comparing and restoring history (Bitconn Code / Python Payload) -->
+    <record id="bitconn_code_history_wizard_view" model="ir.ui.view">
+      <field name="name">Bitconn Code History Wizard</field>
+      <field name="model">bitconn.code.history.wizard</field>
+      <field name="arch" type="xml">
+        <form>
+          <group>
+            <group>
+              <field name="revision" required="1" widget="selection"/>
+            </group>
+          </group>
+          <field name="code_diff" invisible="not code_diff"/>
+          <div class="alert alert-warning my-2" role="alert" invisible="code_diff">
+            <span>No diff available</span>
+          </div>
+          <footer>
+            <button string="Restore Revision" name="restore_revision" type="object"
+                    class="btn-primary" invisible="not code_diff" data-hotkey="q"/>
+            <button string="Cancel" class="btn-secondary" special="cancel" data-hotkey="x"/>
+          </footer>
+        </form>
+      </field>
+    </record>
+
+    <!-- Wizard form for comparing and restoring history (Webhook Python Code) -->
+    <record id="bitconn_webhook_code_history_wizard_view" model="ir.ui.view">
+      <field name="name">Bitconn Webhook Code History Wizard</field>
+      <field name="model">bitconn.webhook.code.history.wizard</field>
+      <field name="arch" type="xml">
+        <form>
+          <group>
+            <group>
+              <field name="revision" required="1" widget="selection"/>
+            </group>
+          </group>
+          <field name="code_diff" invisible="not code_diff"/>
+          <div class="alert alert-warning my-2" role="alert" invisible="code_diff">
+            <span>No diff available</span>
+          </div>
+          <footer>
+            <button string="Restore Revision" name="restore_revision" type="object"
+                    class="btn-primary" invisible="not code_diff" data-hotkey="q"/>
+            <button string="Cancel" class="btn-secondary" special="cancel" data-hotkey="x"/>
+          </footer>
+        </form>
+      </field>
+    </record>
+
+  </data>
+</odoo>

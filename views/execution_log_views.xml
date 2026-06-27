@@ -1,0 +1,96 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+
+    <record id="view_bitconn_execution_log_tree" model="ir.ui.view">
+      <field name="name">bitconn.webhook.execution.log.tree</field>
+      <field name="model">bitconn.webhook.execution.log</field>
+      <field name="arch" type="xml">
+        <list>
+          <field name="webhook_id" optional="show"/>
+          <field name="direction" widget="badge" decoration-success="direction == 'inbound'" decoration-info="direction == 'outbound'"/>
+          <field name="state" widget="badge" decoration-success="state == 'success'" decoration-danger="state == 'error'"/>
+          <field name="http_method" optional="show"/>
+          <field name="model_name" optional="show"/>
+          <field name="method" optional="show"/>
+          <field name="execution_date"/>
+          <field name="duration" optional="show"/>
+        </list>
+      </field>
+    </record>
+
+    <record id="view_bitconn_execution_log_form" model="ir.ui.view">
+      <field name="name">bitconn.webhook.execution.log.form</field>
+      <field name="model">bitconn.webhook.execution.log</field>
+      <field name="arch" type="xml">
+        <form>
+          <sheet>
+            <group>
+              <group>
+                <field name="webhook_id"/>
+                <field name="server_action_id"/>
+                <field name="direction" widget="badge" decoration-success="direction == 'inbound'" decoration-info="direction == 'outbound'"/>
+                <field name="state" widget="badge" decoration-success="state == 'success'" decoration-danger="state == 'error'"/>
+              </group>
+              <group>
+                <field name="execution_date"/>
+                <field name="duration"/>
+                <field name="http_method"/>
+                <field name="http_status"/>
+              </group>
+            </group>
+            <group>
+              <field name="model_name"/>
+              <field name="method"/>
+            </group>
+            <separator string="Input"/>
+            <field name="input_data" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'readonly': true}"/>
+            <separator string="Execution"/>
+            <field name="execution_data" nolabel="1" widget="code" options="{'mode': 'python', 'lineWrapping': true, 'readonly': true}"/>
+            <separator string="Output"/>
+            <field name="output_data" nolabel="1" widget="code" options="{'mode': 'javascript', 'lang': 'json', 'lineWrapping': true, 'readonly': true}"/>
+            <separator string="Error" invisible="state != 'error'"/>
+            <field name="error_message" nolabel="1" invisible="state != 'error'"/>
+          </sheet>
+        </form>
+      </field>
+    </record>
+
+    <record id="view_bitconn_execution_log_search" model="ir.ui.view">
+      <field name="name">bitconn.webhook.execution.log.search</field>
+      <field name="model">bitconn.webhook.execution.log</field>
+      <field name="arch" type="xml">
+        <search>
+          <field name="webhook_id"/>
+          <field name="direction"/>
+          <field name="state"/>
+          <filter string="Inbound" name="filter_inbound" domain="[('direction', '=', 'inbound')]"/>
+          <filter string="Outbound" name="filter_outbound" domain="[('direction', '=', 'outbound')]"/>
+          <separator/>
+          <filter string="Success" name="filter_success" domain="[('state', '=', 'success')]"/>
+          <filter string="Error" name="filter_error" domain="[('state', '=', 'error')]"/>
+          <group name="group_by">
+            <filter string="Webhook" name="group_webhook" context="{'group_by': 'webhook_id'}"/>
+            <filter string="Direction" name="group_direction" context="{'group_by': 'direction'}"/>
+            <filter string="Status" name="group_state" context="{'group_by': 'state'}"/>
+            <filter string="Execution Date" name="group_date" context="{'group_by': 'execution_date'}"/>
+          </group>
+        </search>
+      </field>
+    </record>
+
+    <record id="action_bitconn_execution_log" model="ir.actions.act_window">
+      <field name="name">Execution Logs</field>
+      <field name="res_model">bitconn.webhook.execution.log</field>
+      <field name="view_mode">list,form</field>
+      <field name="search_view_id" ref="view_bitconn_execution_log_search"/>
+    </record>
+
+    <menuitem id="menu_bitconn_execution_log"
+              name="Execution Logs"
+              parent="menu_bitconn_webhook_root"
+              action="action_bitconn_execution_log"
+              sequence="30"/>
+
+  </data>
+</odoo>

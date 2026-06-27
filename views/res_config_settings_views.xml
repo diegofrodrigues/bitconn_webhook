@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+  <data>
+
+    <record id="view_bitconn_webhook_config_settings" model="ir.ui.view">
+      <field name="name">Bitconn Webhook Settings</field>
+      <field name="model">bitconn.webhook.config.settings</field>
+      <field name="arch" type="xml">
+        <form string="Bitconn Webhook Settings">
+          <sheet>
+            <group>
+              <group>
+                <field name="execution_log_retention_days"/>
+              </group>
+            </group>
+          </sheet>
+          <footer>
+            <button string="Save" name="action_save" type="object" class="btn-primary"/>
+            <button string="Cancel" class="btn-secondary" special="cancel"/>
+          </footer>
+        </form>
+      </field>
+    </record>
+
+    <record id="action_bitconn_webhook_config_settings" model="ir.actions.act_window">
+      <field name="name">Settings</field>
+      <field name="res_model">bitconn.webhook.config.settings</field>
+      <field name="view_mode">form</field>
+      <field name="target">new</field>
+    </record>
+
+    <menuitem id="menu_bitconn_webhook_config_settings"
+              name="Settings"
+              parent="menu_bitconn_webhook_root"
+              action="action_bitconn_webhook_config_settings"
+              sequence="99"/>
+
+  </data>
+</odoo>

@@ -74,6 +74,7 @@
         var ws = null;
         var wsToken = null;
         var wsUrl = null;
+        var _bitconnPasswd = null;
         var bannerEl = container.querySelector('#bitconn_terminal_banner');
         var _onDataDisposable = null; // track onData handler for cleanup
         var _keepaliveTimer = null;   // periodic keepalive for proxy environments
@@ -81,6 +82,8 @@
         var _reconnectAttempts = 0;
         var _maxReconnectAttempts = 3;
         var _userDisconnected = false; // true when user clicks Disconnect
+        var _passwordPromptActive = false;
+        var _passwordPromptDisposable = null;
 
         function showBanner(msg) {
             try {
@@ -94,23 +97,25 @@
             try { if (bannerEl) { bannerEl.style.display = 'none'; } } catch (e) {}
         }
 
-        function setButtonsState(running) {
+        function setButtonsState(state) {
             var connectBtn = container.querySelector('.o_bitconn_terminal_connect');
             var shellBtn = container.querySelector('.o_bitconn_terminal_shell');
             var disconnectBtn = container.querySelector('.o_bitconn_terminal_disconnect');
+            var clearBtn = container.querySelector('.o_bitconn_terminal_clear');
+            var cancelBtn = container.querySelector('.o_bitconn_terminal_cancel');
             
-            if (connectBtn) {
-                connectBtn.style.display = running ? 'none' : '';
-            }
-            if (shellBtn) {
-                shellBtn.style.display = running ? 'none' : '';
-            }
-            if (disconnectBtn) {
-                disconnectBtn.style.display = running ? '' : 'none';
-            }
+            var s = function(el, show) {
+                if (el) { el.style.display = show ? '' : 'none'; }
+            };
+            s(connectBtn, state === 'welcome');
+            s(shellBtn, state === 'welcome');
+            s(disconnectBtn, state === 'connected');
+            s(clearBtn, state === 'connected');
+            s(cancelBtn, state === 'password');
         }
 
         function showWelcome() {
+            setButtonsState('welcome');
             try {
                 var banner = '';
                 // Move cursor to top-left and clear entire screen before banner
@@ -136,58 +141,361 @@
 
         // showWelcome is called after fitAddon runs (see setTimeout above)
 
+        function _validatePasswordPolicy(pwd) {
+            if (!pwd || pwd.length < 8) return 'Minimum 8 characters';
+            if (!/[A-Z]/.test(pwd)) return 'Must contain uppercase letter';
+            if (!/[a-z]/.test(pwd)) return 'Must contain lowercase letter';
+            if (!/[0-9]/.test(pwd)) return 'Must contain a number';
+            if (!/[$@$!%*#?&()_\-+=.,:;]/.test(pwd)) return 'Must contain a special character';
+            return null;
+        }
+
+        function _capturePasswordInTerminal(promptMsg, callback) {
+            _passwordPromptActive = true;
+            setButtonsState('password');
+            term.reset();
+            term.writeln('\r\n\x1b[37m' + promptMsg + '\x1b[0m');
+            term.write('\r\n\x1b[1;34mbitconn password: \x1b[0m');
+
+            var buf = '';
+            var disposable = null;
+
+            function handler(data) {
+                if (data === '\r' || data === '\n') {
+                    if (disposable && typeof disposable.dispose === 'function') {
+                        disposable.dispose();
+                    }
+                    _passwordPromptDisposable = null;
+                    term.write('\r\n');
+                    _passwordPromptActive = false;
+                    callback(buf);
+                    return;
+                }
+                if (data === '\x7f' || data === '\b') {
+                    if (buf.length > 0) {
+                        buf = buf.slice(0, -1);
+                        term.write('\b \b');
+                    }
+                    return;
+                }
+                if (data === '\x1b') {
+                    if (disposable && typeof disposable.dispose === 'function') {
+                        disposable.dispose();
+                    }
+                    _passwordPromptDisposable = null;
+                    term.writeln('\r\n\x1b[1;31m[ABORT] Password prompt cancelled.\x1b[0m');
+                    _passwordPromptActive = false;
+                    callback(null);
+                    return;
+                }
+                if (data.length === 1) {
+                    buf += data;
+                    term.write('*');
+                }
+            }
+
+            if (typeof term.onKey === 'function') {
+                disposable = term.onKey(function(ev) {
+                    handler(ev.key);
+                });
+                _passwordPromptDisposable = disposable;
+            } else if (typeof term.onData === 'function') {
+                disposable = term.onData(function(data) {
+                    handler(data);
+                });
+                _passwordPromptDisposable = disposable;
+            }
+        }
+
+        function _disposeActivePrompt() {
+            if (_passwordPromptDisposable && typeof _passwordPromptDisposable.dispose === 'function') {
+                _passwordPromptDisposable.dispose();
+                _passwordPromptDisposable = null;
+            }
+            _passwordPromptActive = false;
+        }
+
+        function _countdownThen(seconds, msg, callback, actionText) {
+            term.writeln('\r\n' + msg);
+            var count = seconds;
+            function tick() {
+                if (count <= 0) {
+                    term.write('\r\n');
+                    callback();
+                    return;
+                }
+                term.write('\r\x1b[90m' + (actionText || '') + ' ' + count + 's...\x1b[0m');
+                count--;
+                setTimeout(tick, 1000);
+            }
+            tick();
+        }
+
+        function _registerPasswordInTerminal(callback) {
+            _disposeActivePrompt();
+            _passwordPromptActive = true;
+            setButtonsState('password');
+            term.reset();
+
+            var logo = '\x1b[1;34m';
+            logo += '┓ •                        \r\n';
+            logo += '┣┓┓╋┏┏┓┏┓┏┓  ╋┏┓┏┓┏┳┓┓┏┓┏┓┃\r\n';
+            logo += '┗┛┗┗┗┗┛┛┗┛┗  ┗┗ ┛ ┛┗┗┗┛┗┗┻┗\r\n';
+            logo += '\x1b[0m\r\n';
+            logo += '\x1b[37mSet a new terminal password\x1b[0m\r\n';
+            logo += '\x1b[90m(8+ chars, uppercase, lowercase, number, special character)\x1b[0m\r\n';
+            term.write(logo);
+
+            function _capturePwd(promptText, onResult) {
+                var buf = '';
+                var disposable = null;
+
+                term.write('\r\n\x1b[1;34m' + promptText + '\x1b[0m');
+
+                function handler(data) {
+                    if (data === '\r' || data === '\n') {
+                        if (disposable && typeof disposable.dispose === 'function') {
+                            disposable.dispose();
+                        }
+                        _passwordPromptDisposable = null;
+                        term.write('\r\n');
+                        onResult(buf);
+                        return;
+                    }
+                    if (data === '\x7f' || data === '\b') {
+                        if (buf.length > 0) {
+                            buf = buf.slice(0, -1);
+                            term.write('\b \b');
+                        }
+                        return;
+                    }
+                    if (data === '\x1b') {
+                        if (disposable && typeof disposable.dispose === 'function') {
+                            disposable.dispose();
+                        }
+                        _passwordPromptDisposable = null;
+                        _passwordPromptActive = false;
+                        callback(null);
+                        return;
+                    }
+                    if (data.length === 1) {
+                        buf += data;
+                        term.write('*');
+                    }
+                }
+
+                if (typeof term.onKey === 'function') {
+                    disposable = term.onKey(function(ev) { handler(ev.key); });
+                    _passwordPromptDisposable = disposable;
+                } else if (typeof term.onData === 'function') {
+                    disposable = term.onData(function(data) { handler(data); });
+                    _passwordPromptDisposable = disposable;
+                }
+            }
+
+            _capturePwd('register bitconn password: ', function(pwd1) {
+                _capturePwd('confirm bitconn password: ', function(pwd2) {
+                    if (pwd1 !== pwd2) {
+                        _countdownThen(3, '\x1b[1;31m[ERROR] Passwords do not match.\x1b[0m', function() {
+                            _registerPasswordInTerminal(callback);
+                        }, 'Retrying in');
+                        return;
+                    }
+                    var policyErr = _validatePasswordPolicy(pwd1);
+                    if (policyErr) {
+                        _countdownThen(3, '\x1b[1;31m[ERROR] ' + policyErr + '\x1b[0m', function() {
+                            _registerPasswordInTerminal(callback);
+                        }, 'Retrying in');
+                        return;
+                    }
+                    _passwordPromptActive = false;
+                    callback(pwd1);
+                });
+            });
+        }
+
         function startSession(shellMode) {
-            if (ws) { return; }
+            if (ws || _passwordPromptActive) { return; }
             shellMode = shellMode || 'bash';
             _lastShellMode = shellMode;
             _userDisconnected = false;
             _reconnectAttempts = 0;
-            
-            fetch('/bitconn_webhook/terminal/get_ws_token', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                credentials: 'same-origin',
-                body: JSON.stringify({
-                    jsonrpc: '2.0',
-                    method: 'call',
-                    params: {shell_mode: shellMode},
-                    id: Math.random()
+
+            function doConnect(masterPwd) {
+                fetch('/bitconn_webhook/terminal/get_ws_token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        method: 'call',
+                        params: {shell_mode: shellMode, master_pwd: masterPwd},
+                        id: Math.random()
+                    })
                 })
-            })
-            .then(function(r) { 
-                if (!r.ok) {
-                    throw new Error('HTTP ' + r.status);
-                }
-                return r.json(); 
-            })
-            .then(function(response) {
-                var data = response.result || response;
-                
-                if (data.error) {
-                    term.writeln('\r\n[ERROR] ' + data.error);
-                    console.error('[bitconn_terminal] Server error:', data.error);
-                    return;
-                }
-                
-                wsToken = data.token;
-                wsUrl = data.ws_url;
-                
-                if (!wsToken || !wsUrl) {
-                    console.error('[bitconn_terminal] Invalid response - missing token or ws_url');
-                    term.writeln('\r\n[ERROR] Invalid server response');
-                    return;
-                }
-                
-                // Connect WebSocket
-                connectWebSocket();
-            })
-            .catch(function(err) {
-                console.error('[bitconn_terminal] Fetch error:', err);
-                term.writeln('\r\n[ERROR] Failed to get token: ' + String(err));
-            });
+                .then(function(r) { 
+                    if (!r.ok) {
+                        throw new Error('HTTP ' + r.status);
+                    }
+                    return r.json(); 
+                })
+                .then(function(response) {
+                    var data = response.result || response;
+
+                    if (data.error === 'bitconn_passwd_not_configured') {
+                        _registerPasswordInTerminal(function(newPwd) {
+                            if (!newPwd) { return; }
+                            fetch('/bitconn_webhook/terminal/set_password', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                },
+                                credentials: 'same-origin',
+                                body: JSON.stringify({
+                                    jsonrpc: '2.0',
+                                    method: 'call',
+                                    params: {new_password: newPwd},
+                                    id: Math.random()
+                                })
+                            })
+                            .then(function(r) { return r.json(); })
+                            .then(function(resp) {
+                                var rd = resp.result || resp;
+                                if (rd.error) {
+                                    term.writeln('\x1b[1;31m[ERROR] ' + rd.error + '\x1b[0m');
+                                } else {
+                                    _bitconnPasswd = newPwd;
+                                    wsToken = rd.token;
+                                    wsUrl = rd.ws_url;
+                                    _countdownThen(3, '\x1b[1;32m[SETUP] Password configured\x1b[0m', function() {
+                                        connectWebSocket();
+                                    }, 'Connecting in');
+                                }
+                            });
+                        });
+                        return;
+                    }
+
+                    if (data.error === 'invalid_bitconn_passwd') {
+                        _capturePasswordInTerminal(
+                            'Invalid password',
+                            function(newPwd) {
+                                if (newPwd) {
+                                    _bitconnPasswd = newPwd;
+                                    doConnect(newPwd);
+                                }
+                            }
+                        );
+                        return;
+                    }
+
+                    if (data.error) {
+                        term.writeln('\r\n[ERROR] ' + data.error);
+                        console.error('[bitconn_terminal] Server error:', data.error);
+                        return;
+                    }
+
+                    wsToken = data.token;
+                    wsUrl = data.ws_url;
+
+                    if (!wsToken || !wsUrl) {
+                        console.error('[bitconn_terminal] Invalid response - missing token or ws_url');
+                        term.writeln('\r\n[ERROR] Invalid server response');
+                        return;
+                    }
+
+                    connectWebSocket();
+                })
+                .catch(function(err) {
+                    console.error('[bitconn_terminal] Fetch error:', err);
+                    term.writeln('\r\n[ERROR] Failed to get token: ' + String(err));
+                });
+            }
+
+            if (_bitconnPasswd) {
+                doConnect(_bitconnPasswd);
+            } else {
+                fetch('/bitconn_webhook/terminal/get_ws_token', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-Requested-With': 'XMLHttpRequest'
+                    },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({
+                        jsonrpc: '2.0',
+                        method: 'call',
+                        params: {shell_mode: shellMode},
+                        id: Math.random()
+                    })
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(response) {
+                    var data = response.result || response;
+                    if (data.error === 'bitconn_passwd_not_configured') {
+                        _registerPasswordInTerminal(function(newPwd) {
+                            if (!newPwd) { return; }
+                            fetch('/bitconn_webhook/terminal/set_password', {
+                                method: 'POST',
+                                headers: {
+                                    'Content-Type': 'application/json',
+                                    'X-Requested-With': 'XMLHttpRequest'
+                                },
+                                credentials: 'same-origin',
+                                body: JSON.stringify({
+                                    jsonrpc: '2.0',
+                                    method: 'call',
+                                    params: {new_password: newPwd},
+                                    id: Math.random()
+                                })
+                            })
+                            .then(function(r) { return r.json(); })
+                            .then(function(resp) {
+                                var rd = resp.result || resp;
+                                if (rd.error) {
+                                    term.writeln('\x1b[1;31m[ERROR] ' + rd.error + '\x1b[0m');
+                                } else {
+                                    _bitconnPasswd = newPwd;
+                                    wsToken = rd.token;
+                                    wsUrl = rd.ws_url;
+                                    _countdownThen(3, '\x1b[1;32m[SETUP] Password configured\x1b[0m', function() {
+                                        connectWebSocket();
+                                    }, 'Connecting in');
+                                }
+                            });
+                        });
+                    } else {
+                        _capturePasswordInTerminal(
+                            'Enter the bitconn password',
+                            function(masterPwd) {
+                                if (masterPwd) {
+                                    _bitconnPasswd = masterPwd;
+                                    doConnect(masterPwd);
+                                } else {
+                                    term.writeln('\x1b[1;31m[ERROR] bitconn password required.\x1b[0m');
+                                }
+                            }
+                        );
+                    }
+                })
+                .catch(function() {
+                    _capturePasswordInTerminal(
+                        'Enter the bitconn password',
+                        function(masterPwd) {
+                            if (masterPwd) {
+                                _bitconnPasswd = masterPwd;
+                                doConnect(masterPwd);
+                            } else {
+                                term.writeln('\x1b[1;31m[ERROR] bitconn password required.\x1b[0m');
+                            }
+                        }
+                    );
+                });
+            }
         }
 
         function connectWebSocket() {
@@ -205,9 +513,10 @@
                 
                 ws.onopen = function() {
                     console.log('[bitconn_terminal] Connected');
+                    term.reset();
                     _reconnectAttempts = 0;
                     hideBanner();
-                    setButtonsState(true);
+                    setButtonsState('connected');
                     
                     // Register input handlers AFTER connection is open
                     registerInputHandlers();
@@ -251,14 +560,15 @@
                     }
                     ws = null;
                     
-                    // If user clicked Disconnect, resetTerminal() already handled clear+welcome
+                    // If user clicked Disconnect, just reset
                     if (_userDisconnected) {
+                        setButtonsState('welcome');
                         return;
                     }
                     
                     // Auth failure or deliberate close — no retry
                     if (event.code === 1008 || event.code === 1000) {
-                        setButtonsState(false);
+                        setButtonsState('welcome');
                         if (event.code === 1008) {
                             term.writeln('\r\n\x1b[1;31m[AUTH] Authentication failed. Click Connect to retry.\x1b[0m');
                         }
@@ -267,7 +577,7 @@
                     
                     // Shell died on server side
                     if (event.code === 1011) {
-                        setButtonsState(false);
+                        setButtonsState('welcome');
                         term.writeln('\r\n\x1b[1;33m[INFO] Shell process terminated. Click Connect to start a new session.\x1b[0m');
                         return;
                     }
@@ -283,7 +593,7 @@
                             startSession(_lastShellMode);
                         }, delay);
                     } else {
-                        setButtonsState(false);
+                        setButtonsState('welcome');
                         term.writeln('\r\n\x1b[1;31m[ERROR] Connection lost after ' + _maxReconnectAttempts + ' retries. Click Connect to try again.\x1b[0m');
                     }
                 };
@@ -327,6 +637,12 @@
 
         function closeSession() {
             _userDisconnected = true;
+            _bitconnPasswd = null;
+            _passwordPromptActive = false;
+            if (_passwordPromptDisposable && typeof _passwordPromptDisposable.dispose === 'function') {
+                _passwordPromptDisposable.dispose();
+                _passwordPromptDisposable = null;
+            }
             _stopKeepalive();
             // Dispose input handler to prevent ghost writes
             if (_onDataDisposable && typeof _onDataDisposable.dispose === 'function') {
@@ -339,12 +655,12 @@
             }
             wsToken = null;
             wsUrl = null;
-            setButtonsState(false);
+            setButtonsState('welcome');
         }
         
         function resetTerminal() {
             closeSession();
-            term.clear();
+            term.reset();
             showWelcome();
             hideBanner();
         }
@@ -421,12 +737,19 @@
         if (clearBtn) {
             clearBtn.addEventListener('click', function(ev) {
                 ev.preventDefault();
-                if (!ws) {
+                if (ws) {
                     term.clear();
-                    showWelcome();
                 } else {
-                    term.clear();
+                    resetTerminal();
                 }
+            });
+        }
+
+        var cancelBtn = container.querySelector('.o_bitconn_terminal_cancel');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', function(ev) {
+                ev.preventDefault();
+                resetTerminal();
             });
         }
 

@@ -3,6 +3,7 @@ from odoo.http import request
 import json
 import re
 import ast
+import time
 
 
 class BitconnWebhookController(http.Controller):
@@ -235,22 +236,36 @@ class BitconnWebhookController(http.Controller):
         # Check if custom code execution is enabled (doesn't require model)
         # If can_code is enabled and method is 'code', OR if no model provided and can_code is enabled
         if conf.can_code and (method == 'code' or (not model and conf.pin_request) or (not model and conf.python_code)):
+            _start = time.time()
             res = conf._exec_code(
                 raw_body, 
                 request_headers=dict(request.httprequest.headers),
                 request_method=request.httprequest.method
             )
             status = 200 if res.get('ok') else 400
-            
+
+            conf._create_execution_log(
+                direction='inbound',
+                state='success' if res.get('ok') else 'error',
+                input_data=raw_body,
+                output_data=json.dumps(res, indent=2, ensure_ascii=False),
+                error_message=res.get('error') or res.get('reason'),
+                http_method=http_method,
+                http_status=status,
+                method='code',
+                duration=time.time() - _start,
+            )
+
             # Save sample request if pinned
             save_sample_async_if_pinned()
-            
+
             return request.make_json_response(res, status=status)
 
         # For other methods, model is required
         if not model:
             return request.make_json_response({'ok': False, 'error': 'invalid_payload', 'reason': 'missing_model'}, status=400)
 
+        _start = time.time()
         if method == 'create':
             res = conf._exec_create(model, values)
         elif method == 'write':
@@ -268,10 +283,23 @@ class BitconnWebhookController(http.Controller):
         if parse_error and res.get('ok'):
             # Anexar aviso de parsing tolerante, sem quebrar sucesso principal
             res['warning'] = parse_error
-        
+
+        conf._create_execution_log(
+            direction='inbound',
+            state='success' if res.get('ok') else 'error',
+            input_data=raw_body,
+            output_data=json.dumps(res, indent=2, ensure_ascii=False),
+            error_message=res.get('error') or res.get('reason'),
+            http_method=http_method,
+            http_status=status,
+            model_name=model,
+            method=method,
+            duration=time.time() - _start,
+        )
+
         # Save sample request if pinned (for all operations)
         save_sample_async_if_pinned()
-        
+
         return request.make_json_response(res, status=status)
 
     @http.route(['/bitconn/webhook/<string:webhook_uuid>/schema'], type='http', auth='public', methods=['GET'], csrf=False)

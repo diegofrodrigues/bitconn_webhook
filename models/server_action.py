@@ -1,5 +1,13 @@
 from odoo import api, fields, models, _
+from odoo.exceptions import UserError
+from odoo.tools import float_compare
+from pytz import timezone
 import json
+import base64
+import logging
+import time
+
+_logger = logging.getLogger(__name__)
 
 
 class IrActionsServer(models.Model):
@@ -44,9 +52,108 @@ result = {'id': record.id, 'name': record.name}"""
     )
 
     state = fields.Selection(
-        selection_add=[('bitconn_webhook', 'Bitconn Webhook')],
-        ondelete={'bitconn_webhook': 'cascade'}
+        selection_add=[
+            ('bitconn_webhook', 'Bitconn Webhook'),
+            ('bitconn_code', 'Bitconn Code'),
+        ],
+        ondelete={'bitconn_webhook': 'cascade', 'bitconn_code': 'cascade'}
     )
+
+    bitconn_code = fields.Text(
+        string='Bitconn Code',
+        help='Bloco de código Python sem restrições. Use exec() puro com acesso total a builtins e imports.\n\n'
+             'Variáveis nativas Odoo mantidas:\n'
+             '• record, records, env, model\n'
+             '• self (Server Action), UserError\n'
+             '• time, datetime, dateutil, timezone\n'
+             '• uid, user, float_compare\n'
+             '• b64encode, b64decode, log, _logger\n\n'
+             'Defina a variável result com o valor de retorno desejado.',
+        default="""# ==========================================
+# Variaveis disponiveis:
+#   record   - Registro atual (singleton)
+#   records  - Todos os registros selecionados
+#   env      - Ambiente Odoo
+#   model    - Classe do modelo atual
+#   self     - Esta Server Action
+#   UserError, time, datetime, dateutil
+#   uid, user, timezone, float_compare
+#   b64encode, b64decode, log, _logger
+#
+# Importe o que precisar:
+#   import requests
+#
+# Defina result:
+#   result = {'ok': True, 'id': record.id}
+# ==========================================""",
+    )
+
+    bitconn_code_last_result = fields.Text(
+        string='Code Last Result',
+        readonly=True,
+        help='Resultado da última execução do Bitconn Code.'
+    )
+
+    show_bitconn_code_history = fields.Boolean(
+        compute='_compute_show_bitconn_code_history'
+    )
+
+    def _compute_show_bitconn_code_history(self):
+        History = self.env['bitconn.code.history']
+        for action in self:
+            action.show_bitconn_code_history = (
+                action.state == 'bitconn_code'
+                and History.search_count([
+                    ('action_id', '=', action.id),
+                    ('code_type', '=', 'bitconn_code'),
+                    ('code', '!=', action.bitconn_code),
+                ]) > 0
+            )
+
+    def action_bitconn_code_history(self):
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Code History'),
+            'target': 'new',
+            'views': [(False, 'form')],
+            'res_model': 'bitconn.code.history.wizard',
+            'context': {
+                'default_action_id': self.id,
+                'default_code_type': 'bitconn_code',
+            },
+        }
+
+    def action_bitconn_python_payload_history(self):
+        self.ensure_one()
+        return {
+            'type': 'ir.actions.act_window',
+            'name': _('Python Payload History'),
+            'target': 'new',
+            'views': [(False, 'form')],
+            'res_model': 'bitconn.code.history.wizard',
+            'context': {
+                'default_action_id': self.id,
+                'default_code_type': 'python_payload',
+            },
+        }
+
+    show_bitconn_python_payload_history = fields.Boolean(
+        compute='_compute_show_bitconn_python_payload_history'
+    )
+
+    def _compute_show_bitconn_python_payload_history(self):
+        History = self.env['bitconn.code.history']
+        for action in self:
+            action.show_bitconn_python_payload_history = (
+                action.state == 'bitconn_webhook'
+                and History.search_count([
+                    ('action_id', '=', action.id),
+                    ('code_type', '=', 'python_payload'),
+                    ('code', '!=', action.bitconn_python_payload_code),
+                ]) > 0
+            )
+
     bitconn_webhook_id = fields.Many2one('bitconn.webhook', string='Webhook', help='Webhook configuration to use for outbound send')
     bitconn_field_ids = fields.Many2many(
         'ir.model.fields', string='Fields to Send',
@@ -66,7 +173,7 @@ result = {'id': record.id, 'name': record.name}"""
     help='If Manual Payload is enabled, this JSON body will be sent as-is. Must be a JSON object.'
     )
     bitconn_last_result = fields.Text(
-        string='Last Result',
+        string='Webhook Last Result',
         readonly=True,
         help='Latest HTTP status and response body from running this Server Action.'
     )
@@ -86,9 +193,22 @@ result = {'id': record.id, 'name': record.name}"""
                 rec.bitconn_preview_payload = rec._generate_bitconn_preview()
 
     def write(self, vals):
+        if 'bitconn_code' in vals or 'bitconn_python_payload_code' in vals:
+            for action in self:
+                if action.state == 'bitconn_code' and 'bitconn_code' in vals and vals.get('bitconn_code') and action.bitconn_code != vals['bitconn_code']:
+                    self.env['bitconn.code.history'].create({
+                        'action_id': action.id,
+                        'code_type': 'bitconn_code',
+                        'code': action.bitconn_code,
+                    })
+                if action.state == 'bitconn_webhook' and 'bitconn_python_payload_code' in vals and vals.get('bitconn_python_payload_code') and action.bitconn_python_payload_code != vals['bitconn_python_payload_code']:
+                    self.env['bitconn.code.history'].create({
+                        'action_id': action.id,
+                        'code_type': 'python_payload',
+                        'code': action.bitconn_python_payload_code,
+                    })
         res = super().write(vals)
         if 'bitconn_webhook_id' in vals:
-            # Sync webhook to parent automation rule
             for action in self:
                 if action.base_automation_id and vals.get('bitconn_webhook_id'):
                     if not action.base_automation_id.bitconn_webhook_id:
@@ -98,10 +218,25 @@ result = {'id': record.id, 'name': record.name}"""
     @api.model_create_multi
     def create(self, vals_list):
         records = super().create(vals_list)
+        history_vals = []
         for action in records:
+            if action.state == 'bitconn_code' and action.bitconn_code:
+                history_vals.append({
+                    'action_id': action.id,
+                    'code_type': 'bitconn_code',
+                    'code': action.bitconn_code,
+                })
+            if action.state == 'bitconn_webhook' and action.bitconn_python_payload_code:
+                history_vals.append({
+                    'action_id': action.id,
+                    'code_type': 'python_payload',
+                    'code': action.bitconn_python_payload_code,
+                })
             if action.bitconn_webhook_id and action.base_automation_id:
                 if not action.base_automation_id.bitconn_webhook_id:
                     action.base_automation_id.bitconn_webhook_id = action.bitconn_webhook_id
+        if history_vals:
+            self.env['bitconn.code.history'].create(history_vals)
         return records
 
     def action_generate_bitconn_preview(self):
@@ -262,6 +397,7 @@ result = {'id': record.id, 'name': record.name}"""
             else:
                 body = {'error': 'Nenhum registro selecionado para execução.'}
             # direct send using webhook config
+            _start = time.time()
             try:
                 import requests, json as _json
                 import logging
@@ -342,6 +478,16 @@ result = {'id': record.id, 'name': record.name}"""
                 # Save as formatted JSON
                 formatted_json = _json.dumps(result_data, indent=2, ensure_ascii=False)
                 self.sudo().write({'bitconn_last_result': formatted_json})
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='success',
+                    input_data=data,
+                    execution_data=f"[Python Payload] {method} {url}",
+                    output_data=formatted_json,
+                    http_method=method, http_status=resp.status_code,
+                    model_name=model_name, method='python_payload',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
             except Exception as e:
                 error_data = {
                     'error': str(e),
@@ -349,6 +495,15 @@ result = {'id': record.id, 'name': record.name}"""
                 }
                 error_json = _json.dumps(error_data, indent=2, ensure_ascii=False)
                 self.sudo().write({'bitconn_last_result': error_json})
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='error',
+                    execution_data=f"[Python Payload] {method if 'method' in locals() else 'POST'} {url if 'url' in locals() else self.bitconn_webhook_id.outbound_url}",
+                    error_message=str(e),
+                    http_method=method if 'method' in locals() else 'POST',
+                    model_name=model_name, method='python_payload',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
             return False
         # If manual payload: send body as-is (mantém lógica anterior)
         if self.bitconn_manual_payload and self.bitconn_manual_payload_text:
@@ -442,6 +597,7 @@ result = {'id': record.id, 'name': record.name}"""
                 # On any resolution error, keep original body
                 pass
                         # direct send using webhook config
+            _start = time.time()
             try:
                 import requests, json as _json
                 headers = {'Content-Type': 'application/json'}
@@ -499,6 +655,16 @@ result = {'id': record.id, 'name': record.name}"""
                 # Save as formatted JSON
                 formatted_json = _json.dumps(result_data, indent=2, ensure_ascii=False)
                 self.sudo().write({'bitconn_last_result': formatted_json})
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='success',
+                    input_data=data,
+                    execution_data=f"[Manual Payload] {method} {url}",
+                    output_data=formatted_json,
+                    http_method=method, http_status=resp.status_code,
+                    model_name=model_name, method='manual_payload',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
             except Exception as e:
                 error_data = {
                     'error': str(e),
@@ -506,12 +672,22 @@ result = {'id': record.id, 'name': record.name}"""
                 }
                 error_json = _json.dumps(error_data, indent=2, ensure_ascii=False)
                 self.sudo().write({'bitconn_last_result': error_json})
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='error',
+                    execution_data=f"[Manual Payload] {method if 'method' in locals() else 'POST'} {url if 'url' in locals() else self.bitconn_webhook_id.outbound_url}",
+                    error_message=str(e),
+                    http_method=method if 'method' in locals() else 'POST',
+                    model_name=model_name, method='manual_payload',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
             return False
         # Otherwise: build fields list and use helper
 
         # Otherwise: build fields list and use helper
         base_fields = self.bitconn_field_ids.mapped('name') if self.bitconn_field_ids else []
         fields_list = list(dict.fromkeys(base_fields)) or None
+        _start = time.time()
         result = self.bitconn_webhook_id.send_outbound(model_name, ids=recs.ids, fields=fields_list, extra=None)
         # Format and store result on the action for visibility
         try:
@@ -522,6 +698,15 @@ result = {'id': record.id, 'name': record.name}"""
                 }
                 error_json = json.dumps(error_data, indent=2, ensure_ascii=False)
                 self.sudo().write({'bitconn_last_result': error_json})
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='error',
+                    execution_data=f"[Field-based] {result.get('url', 'N/A')}",
+                    error_message=result.get('error'),
+                    http_method=self.bitconn_webhook_id.outbound_method,
+                    model_name=model_name, method='field_based',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
             else:
                 status = result.get('status') if isinstance(result, dict) else None
                 url = result.get('url', 'N/A')
@@ -564,9 +749,134 @@ result = {'id': record.id, 'name': record.name}"""
                 # Save as formatted JSON
                 formatted_json = json.dumps(result_data, indent=2, ensure_ascii=False)
                 self.sudo().write({'bitconn_last_result': formatted_json})
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='success',
+                    input_data=req_body,
+                    execution_data=f"[Field-based] {url}",
+                    output_data=formatted_json,
+                    http_method=self.bitconn_webhook_id.outbound_method, http_status=status,
+                    model_name=model_name, method='field_based',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
         except Exception:
             # best-effort only
             pass
         return False
+
+    def _run_action_bitconn_code(self, eval_context=None):
+        """Executa código Python sem restrições (sem safe_eval).
+
+        Usa eval_context do Odoo quando possível.
+        Se record vier como bool/None, faz fallback reconstruindo do context.
+        """
+        self.ensure_one()
+
+        if not self.bitconn_code:
+            return False
+
+        # --- Monta as variáveis com fallback seguro ---
+        model_name = self.model_id.model
+
+        # Tenta extrair do eval_context primeiro
+        _env = (eval_context or {}).get('env') or self.env
+        _model = (eval_context or {}).get('model')
+        _record = (eval_context or {}).get('record')
+        _records = (eval_context or {}).get('records')
+
+        # Se record nao é um recordset válido, reconstrói manualmente
+        if not isinstance(_record, models.BaseModel):
+            ctx = self._context or {}
+            active_ids = ctx.get('active_ids') or []
+            active_id = ctx.get('active_id')
+            if model_name:
+                Model = _env[model_name]
+                _model = Model
+                if active_ids:
+                    _records = Model.browse(active_ids).exists()
+                    _record = _records[0] if _records else None
+                elif active_id:
+                    _record = Model.browse(active_id).exists()
+                    _records = _record
+                else:
+                    _record = _records = None
+            else:
+                _record = _records = None
+
+        exec_globals = globals().copy()
+        exec_globals.update({
+            'env': _env,
+            'model': _model,
+            'record': _record,
+            'records': _records,
+            'self': self,
+            'UserError': UserError,
+            'log': (eval_context or {}).get('log'),
+            '_logger': _logger,
+            'uid': (eval_context or {}).get('uid', self.env.uid),
+            'user': (eval_context or {}).get('user', self.env.user),
+            'time': (eval_context or {}).get('time'),
+            'datetime': (eval_context or {}).get('datetime'),
+            'dateutil': (eval_context or {}).get('dateutil'),
+            'timezone': timezone,
+            'float_compare': float_compare,
+            'b64encode': base64.b64encode,
+            'b64decode': base64.b64decode,
+        })
+
+        # Log para debug: tipos das variáveis principais
+        _logger.info(
+            "Bitconn Code - record=%s (type=%s), records=%s (type=%s), env.user=%s",
+            repr(_record), type(_record).__name__,
+            repr(_records), type(_records).__name__,
+            _env.user.id if _env else '?'
+        )
+
+        _start = time.time()
+        try:
+            exec(self.bitconn_code, exec_globals)
+        except Exception as e:
+            import traceback
+            error = f"ERRO: {e}\n\n{traceback.format_exc()}"
+            self.sudo().write({'bitconn_code_last_result': error})
+            if self.bitconn_webhook_id:
+                self.bitconn_webhook_id.sudo()._create_execution_log(
+                    direction='outbound', state='error',
+                    execution_data=f"[Bitconn Code] Code execution failed",
+                    error_message=str(e),
+                    model_name=self.model_id.model, method='code',
+                    server_action_id=self.id,
+                    duration=time.time() - _start,
+                )
+            return False
+
+        result = exec_globals.get('result')
+        action = exec_globals.get('action')
+
+        if result is not None:
+            try:
+                import json as _json
+                formatted = _json.dumps(result, indent=2, ensure_ascii=False)
+                self.sudo().write({'bitconn_code_last_result': formatted})
+            except Exception:
+                formatted = str(result)
+                self.sudo().write({'bitconn_code_last_result': formatted})
+        else:
+            formatted = 'Código executado com sucesso (sem result definido)'
+            self.sudo().write({
+                'bitconn_code_last_result': formatted
+            })
+
+        if self.bitconn_webhook_id:
+            self.bitconn_webhook_id.sudo()._create_execution_log(
+                direction='outbound', state='success',
+                output_data=formatted,
+                execution_data=f"[Bitconn Code] {self.model_id.model}",
+                model_name=self.model_id.model, method='code',
+                server_action_id=self.id,
+                duration=time.time() - _start,
+            )
+
+        return action if action else (result if result is not None else False)
 
     # capture json feature removed intentionally
