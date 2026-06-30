@@ -23,6 +23,7 @@ import termios
 import signal
 import shutil
 from urllib.parse import parse_qs, urlparse, unquote
+import configparser
 
 try:
     import websockets
@@ -54,7 +55,23 @@ WS_HOST = _get_ws_config('bitconn_ws_host', '127.0.0.1')
 WS_PORT = int(_get_ws_config('bitconn_ws_port', '8765'))
 
 def _get_bitconn_passwd():
-    return odoo_config.get('bitconn_passwd', '') or ''
+    stored = odoo_config.get('bitconn_passwd', '') or ''
+    if not stored:
+        stored = _read_bitconn_passwd_from_file()
+        if stored:
+            odoo_config['bitconn_passwd'] = stored
+    return stored
+
+def _read_bitconn_passwd_from_file():
+    config_path = odoo_config['config']
+    if not config_path or not os.path.isfile(config_path):
+        return ''
+    try:
+        p = configparser.ConfigParser()
+        p.read([config_path])
+        return p.get('options', 'bitconn_passwd', fallback='') or ''
+    except Exception:
+        return ''
 
 def _is_bitconn_passwd_configured():
     stored = _get_bitconn_passwd()

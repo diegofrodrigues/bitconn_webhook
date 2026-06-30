@@ -159,7 +159,7 @@
             var disposable = null;
 
             function handler(data) {
-                if (data === '\r' || data === '\n') {
+                if (data === '\r' || data === '\n' || data === 'Enter') {
                     if (disposable && typeof disposable.dispose === 'function') {
                         disposable.dispose();
                     }
@@ -169,14 +169,14 @@
                     callback(buf);
                     return;
                 }
-                if (data === '\x7f' || data === '\b') {
+                if (data === '\x7f' || data === '\b' || data === 'Backspace') {
                     if (buf.length > 0) {
                         buf = buf.slice(0, -1);
                         term.write('\b \b');
                     }
                     return;
                 }
-                if (data === '\x1b') {
+                if (data === '\x1b' || data === 'Escape') {
                     if (disposable && typeof disposable.dispose === 'function') {
                         disposable.dispose();
                     }
@@ -192,14 +192,14 @@
                 }
             }
 
-            if (typeof term.onKey === 'function') {
-                disposable = term.onKey(function(ev) {
-                    handler(ev.key);
-                });
-                _passwordPromptDisposable = disposable;
-            } else if (typeof term.onData === 'function') {
+            if (typeof term.onData === 'function') {
                 disposable = term.onData(function(data) {
                     handler(data);
+                });
+                _passwordPromptDisposable = disposable;
+            } else if (typeof term.onKey === 'function') {
+                disposable = term.onKey(function(ev) {
+                    handler(ev.key);
                 });
                 _passwordPromptDisposable = disposable;
             }
@@ -251,7 +251,7 @@
                 term.write('\r\n\x1b[1;34m' + promptText + '\x1b[0m');
 
                 function handler(data) {
-                    if (data === '\r' || data === '\n') {
+                    if (data === '\r' || data === '\n' || data === 'Enter') {
                         if (disposable && typeof disposable.dispose === 'function') {
                             disposable.dispose();
                         }
@@ -260,14 +260,14 @@
                         onResult(buf);
                         return;
                     }
-                    if (data === '\x7f' || data === '\b') {
+                    if (data === '\x7f' || data === '\b' || data === 'Backspace') {
                         if (buf.length > 0) {
                             buf = buf.slice(0, -1);
                             term.write('\b \b');
                         }
                         return;
                     }
-                    if (data === '\x1b') {
+                    if (data === '\x1b' || data === 'Escape') {
                         if (disposable && typeof disposable.dispose === 'function') {
                             disposable.dispose();
                         }
@@ -282,11 +282,11 @@
                     }
                 }
 
-                if (typeof term.onKey === 'function') {
-                    disposable = term.onKey(function(ev) { handler(ev.key); });
-                    _passwordPromptDisposable = disposable;
-                } else if (typeof term.onData === 'function') {
+                if (typeof term.onData === 'function') {
                     disposable = term.onData(function(data) { handler(data); });
+                    _passwordPromptDisposable = disposable;
+                } else if (typeof term.onKey === 'function') {
+                    disposable = term.onKey(function(ev) { handler(ev.key); });
                     _passwordPromptDisposable = disposable;
                 }
             }
